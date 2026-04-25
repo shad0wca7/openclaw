@@ -2067,6 +2067,9 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Check macOS Swift toolchain
+        run: scripts/check-swift-toolchain-macos.sh apps/macos
+
       - name: Swift lint
         run: |
           swiftlint --config .swiftlint.yml

@@ -3,6 +3,16 @@ import Testing
 @testable import OpenClaw
 
 struct GatewayEndpointStoreTests {
+    @Test func swiftToolchainGuardCatchesLocalMismatch() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let scriptURL = repoRoot.appendingPathComponent("scripts/check-swift-toolchain-macos.sh")
+        #expect(FileManager.default.isReadableFile(atPath: scriptURL.path))
+    }
+
     private func makeLaunchAgentSnapshot(
         env: [String: String],
         token: String?,
