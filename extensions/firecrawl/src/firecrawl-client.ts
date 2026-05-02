@@ -8,6 +8,7 @@ import {
   resolveCacheTtlMs,
   truncateText,
   withStrictWebToolsEndpoint,
+  withTrustedWebToolsEndpoint,
   writeCache,
 } from "openclaw/plugin-sdk/provider-web-fetch";
 import { normalizeSecretInput } from "openclaw/plugin-sdk/secret-input";
@@ -95,11 +96,15 @@ async function postFirecrawlJson<T>(
     apiKey: string;
     body: Record<string, unknown>;
     errorLabel: string;
+    allowSelfHosted?: boolean;
   },
   parse: (response: Response) => Promise<T>,
 ): Promise<T> {
   const apiKey = normalizeSecretInput(params.apiKey);
-  return await withStrictWebToolsEndpoint(
+  const fetchEndpoint = params.allowSelfHosted
+    ? withTrustedWebToolsEndpoint
+    : withStrictWebToolsEndpoint;
+  return await fetchEndpoint(
     {
       url: params.url,
       timeoutSeconds: params.timeoutSeconds,
@@ -320,6 +325,7 @@ export async function runFirecrawlSearch(
       apiKey,
       body,
       errorLabel: "Firecrawl Search",
+      allowSelfHosted,
     },
     async (response) => {
       const payload = (await response.json()) as Record<string, unknown>;
@@ -473,6 +479,7 @@ export async function runFirecrawlScrape(
         proxy,
         storeInCache,
       },
+      allowSelfHosted,
     },
     async (response) => {
       const payload = (await response.json()) as Record<string, unknown>;

@@ -605,7 +605,7 @@ describe("firecrawl tools", () => {
     expect(resolveFirecrawlApiKey(cfg)).toBeUndefined();
   });
 
-  it("only allows the official Firecrawl API host for fetch endpoints", () => {
+  it("only allows the official Firecrawl API host unless self-hosted mode is enabled", () => {
     expect(firecrawlClientTesting.resolveEndpoint("https://api.firecrawl.dev", "/v2/scrape")).toBe(
       "https://api.firecrawl.dev/v2/scrape",
     );
@@ -628,6 +628,57 @@ describe("firecrawl tools", () => {
         allowSelfHosted: true,
       }),
     ).toBe("https://firecrawl.internal/v2/search");
+  });
+
+  it("uses trusted endpoint fetch mode when self-hosted Firecrawl is enabled", async () => {
+    vi.doUnmock("./firecrawl-client.js");
+    vi.resetModules();
+    const guardedFetch = await import("openclaw/plugin-sdk/provider-web-fetch");
+    const strictSpy = vi.spyOn(guardedFetch, "withStrictWebToolsEndpoint").mockResolvedValue({});
+    const trustedSpy = vi.spyOn(guardedFetch, "withTrustedWebToolsEndpoint").mockImplementation(
+      async (_params, run) =>
+        await run({
+          response: new Response(JSON.stringify({ data: { markdown: "# Local Firecrawl" } }), {
+            status: 200,
+          }),
+          finalUrl: "http://127.0.0.1:8787/v2/scrape",
+        }),
+    );
+    const { runFirecrawlScrape: realRunFirecrawlScrape } = await import("./firecrawl-client.js");
+
+    await realRunFirecrawlScrape({
+      cfg: {
+        plugins: {
+          entries: {
+            firecrawl: {
+              config: {
+                webFetch: {
+                  apiKey: "local-key",
+                  baseUrl: "http://127.0.0.1:8787",
+                  allowSelfHosted: true,
+                },
+              },
+            },
+          },
+        },
+      } as OpenClawConfig,
+      url: "https://example.com",
+      extractMode: "markdown",
+      storeInCache: false,
+    });
+
+    expect(trustedSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "http://127.0.0.1:8787/v2/scrape" }),
+      expect.any(Function),
+    );
+    expect(strictSpy).not.toHaveBeenCalled();
+    trustedSpy.mockRestore();
+    strictSpy.mockRestore();
+    vi.doMock("./firecrawl-client.js", () => ({
+      runFirecrawlSearch,
+      runFirecrawlScrape,
+    }));
+    vi.resetModules();
   });
 
   it("respects positive numeric overrides for scrape and cache behavior", () => {
