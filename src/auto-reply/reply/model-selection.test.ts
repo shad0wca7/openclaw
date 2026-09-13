@@ -1163,6 +1163,69 @@ describe("createModelSelectionState respects session model override", () => {
     expect(sessionStore[sessionKey]?.providerOverride).toBeUndefined();
   });
 
+  it.each([
+    { policy: "unrestricted", allow: undefined },
+    { policy: "exact", allow: ["openai/gpt-4o", "xai/grok-4"] },
+    { policy: "provider wildcard", allow: ["openai/gpt-4o", "xai/*"] },
+  ])("preserves an allowed routed primary under $policy policy", async ({ allow }) => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: { primary: "openai/gpt-4o" },
+          models: { "openai/gpt-4o": {}, "xai/grok-4": {} },
+          ...(allow ? { modelPolicy: { allow } } : {}),
+        },
+      },
+    };
+
+    const state = await createModelSelectionState({
+      cfg,
+      agentCfg: cfg.agents?.defaults,
+      defaultProvider: "openai",
+      defaultModel: "gpt-4o",
+      primaryProvider: "xai",
+      primaryModel: "grok-4",
+      provider: "xai",
+      model: "grok-4",
+      hasModelDirective: false,
+    });
+
+    expect(state).toMatchObject({ provider: "xai", model: "grok-4" });
+  });
+
+  it("rejects a disallowed configured primary instead of selecting an unrelated allowed model", async () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          model: { primary: "openai/gpt-5.6-sol" },
+          models: {
+            "olla-hp/gemma": {},
+            "openai/gpt-5.6-sol": {},
+          },
+          modelPolicy: {
+            allow: ["olla-hp/gemma", "openai/gpt-5.6-sol"],
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    await expect(
+      createModelSelectionState({
+        cfg,
+        agentCfg: cfg.agents?.defaults,
+        defaultProvider: "openai",
+        defaultModel: "gpt-5.6-sol",
+        primaryProvider: "deepseek",
+        primaryModel: "deepseek-v4-pro",
+        provider: "deepseek",
+        model: "deepseek-v4-pro",
+        hasModelDirective: false,
+      }),
+    ).rejects.toThrow(
+      'Configured primary model "deepseek/deepseek-v4-pro" is not allowed by agents.defaults.modelPolicy.allow',
+    );
+  });
+
   it("preserves a locked disallowed override without resetting it", async () => {
     const cfg = {
       agents: {

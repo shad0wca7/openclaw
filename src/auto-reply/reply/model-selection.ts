@@ -454,15 +454,25 @@ export async function createModelSelectionState(params: {
     modelSelectionLocked ||
     usesStoredAutomaticSelection;
   if (!skipResolveSelection) {
-    const allowedInitialSelection = visibilityPolicy.resolveSelection({
-      provider,
-      model,
-      routeResolution: "resolved",
-    });
+    const unresolvedSelectionKey = buildModelCatalogRef(provider, model);
+    const configuredPrimaryKey = buildModelCatalogRef(primaryProvider, primaryModel);
+    // A routed primary is an explicit config choice. Silently resolving it to
+    // the first allowlisted catalog row would send the turn to an unrelated model.
+    const routedPrimaryDisallowed =
+      configuredPrimaryKey !== buildModelCatalogRef(defaultProvider, defaultModel) &&
+      unresolvedSelectionKey === configuredPrimaryKey &&
+      !visibilityPolicy.allows({ provider: primaryProvider, model: primaryModel });
+    const allowedInitialSelection = routedPrimaryDisallowed
+      ? null
+      : visibilityPolicy.resolveSelection({
+          provider,
+          model,
+          routeResolution: "resolved",
+        });
     if (!allowedInitialSelection) {
       const policyPath = visibilityPolicy.allowConfigPath ?? "modelPolicy.allow";
       throw new Error(
-        `Configured default model "${buildModelCatalogRef(provider, model)}" is not allowed by ${policyPath}, and no allowed model is available.`,
+        `Configured ${routedPrimaryDisallowed ? "primary" : "default"} model "${unresolvedSelectionKey}" is not allowed by ${policyPath}, and no allowed model is available.`,
       );
     }
     provider = allowedInitialSelection.provider;
