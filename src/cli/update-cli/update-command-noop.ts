@@ -8,6 +8,10 @@ import { assertOpenClawStateWriteAllowedAtPath } from "../../state/openclaw-stat
 import { readPackageVersion, UpdatePreMutationError } from "./shared.js";
 import { maybeRepairLegacyConfigForUpdateChannel } from "./update-command-config.js";
 import { inspectUpdateDatabaseContexts } from "./update-command-database-context.js";
+import {
+  captureUpdateCommandExecutorAuthority,
+  type UpdateCommandExecutor,
+} from "./update-command-executor.js";
 import type { FinishUpdateParams } from "./update-command-finish-types.js";
 import {
   formatUpdateAncestryBlockMessage,
@@ -20,6 +24,7 @@ import {
 import { createPackageRuntimeRecovery } from "./update-command-node-runtime.js";
 import { preflightConfiguredNpmPluginTargets } from "./update-command-plugin-preflight.js";
 import { finishUpdate } from "./update-command-post-update.js";
+import { assertUpdatePackageActivationAdmission } from "./update-command-run.js";
 import {
   collectServiceInspectionFailureFacts,
   type RefuseUpdate,
@@ -59,10 +64,21 @@ export async function finishAlreadyCurrentUpdate(
     managedServiceRoot?: string;
     legacyConfigPlan?: LegacyConfigUpdatePlan;
     runtimeTarget?: { version: string; nodeEngine: string | null };
+    enterUpdateExecutor: UpdateCommandExecutor["enter"];
     stop: () => void;
     refuseUpdate: RefuseUpdate;
   },
 ): Promise<void> {
+  const run = params.opts.run;
+  const enterUpdateExecutor = async (options?: { preflight?: true }) => {
+    assertUpdatePackageActivationAdmission(params.root);
+    const fence = await params.enterUpdateExecutor(params.root, options);
+    if (run) {
+      run.executorFence = fence;
+    }
+    fence.assertCurrent();
+    assertUpdatePackageActivationAdmission(captureUpdateCommandExecutorAuthority(fence).installKey);
+  };
   await withOwnedManagedUpdateEnv(params.ownedManagedUpdateEnv, async () => {
     const result = {
       ...params.result,
@@ -134,6 +150,8 @@ export async function finishAlreadyCurrentUpdate(
       expectedForeground: admission.foreground,
     });
     await Promise.all(admission.contexts.map(revalidateUpdateDatabaseContext));
+    // A Git no-op skips core mutation admission, but may still hand off or converge plugins.
+    await enterUpdateExecutor({ preflight: true });
     let stopState;
     try {
       stopState = admission.foreground
@@ -198,6 +216,7 @@ export async function finishAlreadyCurrentUpdate(
         { failureFacts: collectServiceInspectionFailureFacts(stopState.serviceUpdateVerdict) },
       );
     }
+    await enterUpdateExecutor();
     await assertOpenClawStateWriteAllowedAtPath({
       databasePath: resolveOpenClawStateSqlitePath(context.env),
       env: context.env,

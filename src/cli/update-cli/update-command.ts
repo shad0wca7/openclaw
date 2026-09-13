@@ -313,6 +313,15 @@ async function updateCommandInternal(
     });
   }
 
+  // Preload execution and recovery before the package swap can remove these chunks.
+  const {
+    executeMutableUpdate,
+    finishUpdate,
+    finishAlreadyCurrentUpdate,
+    continueMigratedUpdateInFreshProcess,
+    inspectActivatedUpdateState,
+  } = await import("./update-execution.runtime.js");
+
   const currentCoreFinalization = {
     legacyConfigPlan,
     root,
@@ -330,6 +339,7 @@ async function updateCommandInternal(
     runtimeTarget: target.packageRuntimeTarget,
     managedServiceRootRedirect,
     managedServiceRoot,
+    enterUpdateExecutor: executor.enter,
     stop: presentation.stop,
     refuseUpdate,
   };
@@ -351,7 +361,6 @@ async function updateCommandInternal(
   };
   if (packageAlreadyCurrent) {
     await activateCurrentCore();
-    const { finishAlreadyCurrentUpdate } = await import("./update-execution.runtime.js");
     return await finishAlreadyCurrentUpdate({
       ...currentCoreFinalization,
       opts,
@@ -403,15 +412,6 @@ async function updateCommandInternal(
     packageUpdateNodeRunner = runtimePreflight.value.nodeRunner;
     recoveryState.triageTarget.nodeRunner = packageUpdateNodeRunner;
   }
-
-  // Preload execution and recovery before the package swap can remove these chunks.
-  const {
-    executeMutableUpdate,
-    finishUpdate,
-    finishAlreadyCurrentUpdate,
-    continueMigratedUpdateInFreshProcess,
-    inspectActivatedUpdateState,
-  } = await import("./update-execution.runtime.js");
 
   const progress = createUpdateRunProgress(run, presentation.progress);
   let preUpdatePluginInstallRecords: Awaited<ReturnType<typeof prepareMutableUpdateRuntime>> = {};

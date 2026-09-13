@@ -6856,6 +6856,37 @@ describe("update-cli", () => {
     },
   );
 
+  it("restarts changed plugins on a current Git core through the registered update executor", async () => {
+    const root = process.cwd();
+    mockOwnedGitService(root);
+    mockRunningManagedGateway(["node", path.join(root, "dist", "index.js"), "gateway", "run"]);
+    readPackageVersion.mockResolvedValue(VERSION);
+    mockGatewayHealth(VERSION, "current-git-gateway");
+    vi.mocked(runGatewayUpdate).mockResolvedValueOnce({
+      status: "skipped",
+      mode: "git",
+      root,
+      reason: "already-current",
+      before: { version: VERSION, sha: "abc123" },
+      steps: [],
+      durationMs: 1,
+    });
+    vi.mocked(resolveGatewayInstallEntrypoint).mockResolvedValue(FRESH_POST_UPDATE_ENTRYPOINT);
+    mockNpmPluginOutcomes([], true);
+
+    await invokeUpdateCli({ channel: "dev", yes: true, json: true });
+
+    expect(lastWriteJsonCall()).toMatchObject({
+      status: "ok",
+      postUpdate: { plugins: { changed: true } },
+    });
+    expect(serviceStop).toHaveBeenCalledOnce();
+    expect(freshRestartCalls()).toHaveLength(1);
+    expect(freshRestartCalls()[0]?.[0]).toContain("--update-executor");
+    expect(candidateValidation).not.toHaveBeenCalled();
+    expect(defaultRuntime.exit).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])(
     "reports retained pins on an already-current core (json=%s)",
     async (json) => {
