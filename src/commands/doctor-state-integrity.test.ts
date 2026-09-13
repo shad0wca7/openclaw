@@ -149,6 +149,48 @@ describe("structured state integrity findings", () => {
     });
   });
 
+  it("uses the explicit ambient system owner for session integrity checks", () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        ownership: "explicit",
+        defaults: { systemAgent: { agentId: "main" } },
+        entries: { main: {}, hq: {} },
+      },
+    };
+    const sessionsDir = resolveSessionTranscriptsDirForAgent("main", process.env, () => tempHome);
+    fs.mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
+    const accessSync = fs.accessSync;
+    const accessSpy = vi.spyOn(fs, "accessSync").mockImplementation((target, mode) => {
+      if (target === sessionsDir) {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      }
+      return accessSync(target, mode);
+    });
+
+    // Under explicit ownership with no single default agent, only the configured ambient
+    // system owner (not an undefined default) can resolve this dir; otherwise the check
+    // silently no-ops instead of surfacing the permission issue.
+    let issues: ReturnType<typeof detectStateIntegrityHealthIssues>;
+    try {
+      issues = detectStateIntegrityHealthIssues(cfg);
+    } finally {
+      accessSpy.mockRestore();
+    }
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "runtime-dir-not-writable",
+          // sessionsDir and the session store dir resolve to the same path in this
+          // fixture, and dirCandidates is keyed by path — the later store-dir set
+          // wins the label.
+          label: "Session store dir",
+          path: sessionsDir,
+        }),
+      ]),
+    );
+  });
+
   it("reports permissive state and config file permissions as structured findings", () => {
     if (process.platform === "win32") {
       return;

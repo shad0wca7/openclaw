@@ -26,6 +26,7 @@ export {
   recordSessionToolActionFact,
   resolveEffectiveSessionToolsVisibility,
   resolveSandboxedSessionToolContext,
+  resolveSessionToolRequesterAgentId,
   resolveSessionToolAccess,
 } from "./sessions-access.js";
 export {

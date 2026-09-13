@@ -9,6 +9,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import { recordExecutionDecisionWork } from "../../audit/execution-decision-work.js";
 import { SESSION_LIFECYCLE_CHANGED_ERROR_REASON } from "../../config/sessions/lifecycle.js";
 import { resolveCanonicalMainSessionKey } from "../../config/sessions/main-session-key.js";
+import { resolvePersistedSessionStoreOwnerForKey } from "../../config/sessions/session-store-owner.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { isGatewayClientRequestError } from "../../gateway/call.js";
 import {
@@ -27,8 +28,16 @@ import {
   type SessionToolsVisibility,
   type SessionVisibilityRow,
 } from "../../plugin-sdk/session-visibility.js";
-import { isSubagentSessionKey, parseAgentSessionKey } from "../../routing/session-key.js";
-import { resolveSessionAgentId } from "../agent-scope.js";
+import {
+  isSubagentSessionKey,
+  normalizeAgentId,
+  parseAgentSessionKey,
+} from "../../routing/session-key.js";
+import {
+  listAgentIds,
+  resolveSessionAgentId,
+  tryResolveAmbientOwnerAgentId,
+} from "../agent-scope.js";
 import { getGatewayToolCallerIdentity } from "./gateway-caller-context.js";
 import {
   callAgentToolGatewayRequest,
@@ -45,6 +54,54 @@ export {
   createSessionVisibilityRowChecker,
   resolveEffectiveSessionToolsVisibility,
 } from "../../plugin-sdk/session-visibility.js";
+
+/**
+ * Resolves the owner of a detached session-tool request.
+ *
+ * Native host runtimes can identify themselves (for example, as `codex`) without
+ * being configured OpenClaw agents. Under explicit ownership, treat such a label
+ * as transport provenance and fall back to the configured ambient system owner.
+ * Valid configured requester ids, agent-scoped keys, and fixed-store ownership
+ * keep their existing semantics.
+ */
+export function resolveSessionToolRequesterAgentId(params: {
+  cfg: OpenClawConfig;
+  effectiveRequesterKey: string;
+  requesterAgentId?: string;
+}): string {
+  const parsedAgentId = parseAgentSessionKey(params.effectiveRequesterKey)?.agentId;
+  if (parsedAgentId) {
+    return parsedAgentId;
+  }
+
+  const persistedStoreOwner = resolvePersistedSessionStoreOwnerForKey(
+    params.cfg,
+    params.effectiveRequesterKey,
+  );
+  if (persistedStoreOwner.kind === "configured") {
+    return persistedStoreOwner.agentId;
+  }
+
+  const requestedAgentId = normalizeOptionalString(params.requesterAgentId);
+  if (params.cfg.agents?.ownership === "explicit") {
+    const configuredAgentIds = new Set(listAgentIds(params.cfg).map(normalizeAgentId));
+    const normalizedRequestedAgentId = requestedAgentId
+      ? normalizeAgentId(requestedAgentId)
+      : undefined;
+    if (!normalizedRequestedAgentId || !configuredAgentIds.has(normalizedRequestedAgentId)) {
+      const ambientOwnerAgentId = tryResolveAmbientOwnerAgentId(params.cfg);
+      if (ambientOwnerAgentId && configuredAgentIds.has(ambientOwnerAgentId)) {
+        return ambientOwnerAgentId;
+      }
+    }
+  }
+
+  return resolveSessionAgentId({
+    config: params.cfg,
+    sessionKey: params.effectiveRequesterKey,
+    agentId: requestedAgentId,
+  });
+}
 
 type SessionToolAccessDenied = Extract<SessionVisibilityDecision, { allowed: false }>;
 export type SessionToolAccessResult = SessionVisibilityDecision;

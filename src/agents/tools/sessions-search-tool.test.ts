@@ -243,6 +243,82 @@ describe("sessions_search tool", () => {
     });
   });
 
+  it("maps an unknown host runtime label to the explicit ambient owner", async () => {
+    const requests: CallGatewayRequest[] = [];
+    const tool = createTool({
+      requests,
+      agentId: "codex",
+      config: {
+        agents: {
+          ownership: "explicit",
+          defaults: { systemAgent: { agentId: "main" } },
+          entries: { main: {}, hq: {} },
+        },
+        tools: { sessions: { visibility: "all" } },
+      },
+      results: [hit({ sessionKey: "main", agentId: "main" })],
+    });
+
+    await tool.execute("host-runtime-owner", { query: "text" });
+
+    expect(requests).toContainEqual({
+      method: "sessions.search",
+      params: {
+        agentId: "main",
+        query: "text",
+        limit: 25,
+        sessionKeys: ["main"],
+      },
+    });
+    expect(
+      requests.some(
+        (request) =>
+          request.method === "sessions.search" &&
+          (request.params as { agentId?: unknown }).agentId === "codex",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not search stores owned by unconfigured native runtime labels", async () => {
+    const requests: CallGatewayRequest[] = [];
+    const tool = createTool({
+      requests,
+      agentId: "codex",
+      config: {
+        agents: {
+          ownership: "explicit",
+          defaults: { systemAgent: { agentId: "main" } },
+          entries: { main: {}, hq: {} },
+        },
+        tools: {
+          sessions: { visibility: "all" },
+          agentToAgent: { enabled: true },
+        },
+      },
+      results: [
+        hit({ sessionKey: "main", agentId: "main" }),
+        hit({
+          sessionKey: "agent:codex:stale-native-session",
+          agentId: "codex",
+          messageId: "stale-native-message",
+        }),
+      ],
+    });
+
+    const result = await tool.execute("ignore-stale-native-owner", { query: "text" });
+
+    expect(result.details).toMatchObject({
+      results: [expect.objectContaining({ sessionKey: "main" })],
+    });
+    expect(
+      requests.some(
+        (request) =>
+          request.method === "sessions.search" &&
+          (request.params as { agentId?: unknown }).agentId === "codex",
+      ),
+    ).toBe(false);
+  });
+
   it("never searches or returns incognito sessions", async () => {
     const requests: CallGatewayRequest[] = [];
     const incognitoKey = "agent:main:dashboard:incognito-private";

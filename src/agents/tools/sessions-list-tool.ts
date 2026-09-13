@@ -17,7 +17,6 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { deriveSessionTitle, prepareSessionTitleRead } from "../../gateway/session-utils-core.js";
 import { classifySessionKeyShape, isIncognitoSessionKey } from "../../routing/session-key.js";
 import { getSessionStateVersions } from "../../sessions/session-state-events.js";
-import { resolveSessionAgentIds } from "../agent-scope.js";
 import { stringEnum } from "../schema/typebox.js";
 import {
   describeSessionLinkRule,
@@ -49,6 +48,7 @@ import {
   resolveDisplaySessionKey,
   resolveInternalSessionKey,
   resolveSessionToolContext,
+  resolveSessionToolRequesterAgentId,
   SESSION_LIST_KINDS,
   SessionListRowSchema,
   type GatewaySessionListRow,
@@ -170,11 +170,11 @@ export function createSessionsListTool(opts?: {
         sessionVisibility: visibility,
         a2aPolicy,
       } = resolveSessionToolContext(opts);
-      const requesterAgentId = resolveSessionAgentIds({
-        config: cfg,
-        sessionKey: effectiveRequesterKey,
-        agentId: opts?.requesterAgentIdOverride,
-      }).sessionAgentId;
+      const requesterAgentId = resolveSessionToolRequesterAgentId({
+        cfg,
+        effectiveRequesterKey,
+        requesterAgentId: opts?.requesterAgentIdOverride,
+      });
       const kindsRaw = readStringArrayParam(params, "kinds")?.map((value) => value.toLowerCase());
       const requestedKinds = params.kinds;
       const allowedKinds =

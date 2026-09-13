@@ -19,7 +19,7 @@ import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
 import { redactToolPayloadText } from "../../logging/redact.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { truncateUtf16Safe } from "../../utils.js";
-import { resolveSessionAgentId, resolveSessionAgentIds } from "../agent-scope.js";
+import { resolveSessionAgentId } from "../agent-scope.js";
 import {
   describeSessionLinkRule,
   describeSessionsHistoryTool,
@@ -48,6 +48,7 @@ import {
   resolveSessionReference,
   resolveSessionToolAccess,
   resolveSessionToolContext,
+  resolveSessionToolRequesterAgentId,
   resolveVisibleSessionReference,
   shouldResolveSessionIdInput,
 } from "./sessions-helpers.js";
@@ -444,11 +445,11 @@ export function createSessionsHistoryTool(opts?: {
         sessionVisibility: visibility,
         a2aPolicy,
       } = resolveSessionToolContext(opts);
-      const requesterAgentId = resolveSessionAgentIds({
-        config: cfg,
-        sessionKey: effectiveRequesterKey,
-        agentId: opts?.requesterAgentIdOverride,
-      }).sessionAgentId;
+      const requesterAgentId = resolveSessionToolRequesterAgentId({
+        cfg,
+        effectiveRequesterKey,
+        requesterAgentId: opts?.requesterAgentIdOverride,
+      });
       const normalizedInputKey = sessionKeyParam.trim();
       const isCurrentSession = normalizedInputKey === "current";
       const isConfiguredMainAlias =
