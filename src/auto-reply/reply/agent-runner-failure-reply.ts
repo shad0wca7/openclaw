@@ -81,6 +81,7 @@ export function resolveReplyFailoverFacts(error: unknown, message: string) {
       }),
       status,
       technicalMessage: message,
+      fallbackAttemptCount: isFailoverError(error) ? error.attempts?.length : undefined,
     }),
   };
 }

@@ -10,6 +10,7 @@ import {
   renderMissingApiKeyReplyCopy,
   renderRateLimitOrOverloadedCopy,
   renderRateLimitReplyCopy,
+  resolveProviderRequestFailureCopy,
   renderSanitizedUserFacingText,
 } from "./user-copy.js";
 
@@ -125,6 +126,57 @@ describe("failover user copy", () => {
     );
     expect(renderBillingReplyCopy({})).toBe(
       "⚠️ API provider returned a billing error — your API key has run out of credits or has an insufficient balance. Check your provider's billing dashboard and top up or switch to a different API key.",
+    );
+  });
+
+  it.each([false, true])(
+    "preserves only safe reset facts in rate-limit replies (attempt: %s)",
+    (withAttempt) => {
+      const message =
+        "Subscription exhausted · resets 4:50am (America/Chicago) private-diagnostic-canary";
+      expect(
+        renderRateLimitReplyCopy({
+          reason: "rate_limit",
+          provider: "custom-provider",
+          message,
+          attempts: withAttempt
+            ? [
+                {
+                  provider: "custom-provider",
+                  model: "model",
+                  reason: "rate_limit",
+                  error: message,
+                },
+              ]
+            : [],
+        }),
+      ).toBe(
+        "⚠️ Usage limit reached. Resets at 4:50am (America/Chicago). Try again after the reset.",
+      );
+      expect(
+        resolveProviderRequestFailureCopy({
+          classification: { kind: "reason", reason: "rate_limit" },
+          facet: "quota-429",
+          status: 429,
+          technicalMessage: message,
+        })?.userMessage,
+      ).toBe(
+        "⚠️ Usage limit reached. Resets at 4:50am (America/Chicago). Try again after the reset.",
+      );
+    },
+  );
+
+  it.each([
+    "resets 25:80am (America/Chicago)",
+    "resets 4:50am (private-diagnostic-canary)",
+    "resets 4:50am (America/Unknown_Canary)",
+    '500 {"message":"resets 4:50am (America/Chicago)","secret":"canary"}',
+    "<html>resets 4:50am (America/Chicago) private-canary</html>",
+    "resets 4:50am (America/Chicago)\nprivate-canary",
+    `resets 4:50am (America/Chicago) ${"x".repeat(501)}`,
+  ])("keeps malformed or untrusted reset facts generic: %s", (message) => {
+    expect(renderRateLimitReplyCopy({ reason: "rate_limit", message })).toBe(
+      "⚠️ The model request was rate-limited. Please try again in a few minutes.",
     );
   });
 

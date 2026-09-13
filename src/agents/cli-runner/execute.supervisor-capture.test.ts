@@ -2,6 +2,7 @@
 // disabled and the runner must parse streamed chunks without relying on tails.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { buildKnownAgentRunFailureReplyPayload } from "../../auto-reply/reply/agent-runner-failure-reply.js";
 import {
   markMcpLoopbackRequestFinished,
   markMcpLoopbackRequestStarted,
@@ -31,12 +32,14 @@ import type { CliBackendParseJsonlEvent } from "../../plugins/cli-backend.types.
 import { getPluginModuleLoaderStats } from "../../plugins/plugin-module-loader-cache.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
+import type { ProviderPlugin } from "../../plugins/types.js";
 import { createChildAdapter } from "../../process/supervisor/adapters/child.js";
 import type { getProcessSupervisor } from "../../process/supervisor/index.js";
 import { createProcessSupervisor } from "../../process/supervisor/supervisor.js";
 import { createStubChildAdapter } from "../../process/supervisor/supervisor.test-support.js";
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import { createTestUserTurnTranscriptTarget } from "../../sessions/user-turn-transcript.test-support.js";
+import { resolveRelativeBundledPluginPublicModuleId } from "../../test-utils/bundled-plugin-public-surface.js";
 import { prepareSystemAgentRunAdmission } from "../admitted-run-context.js";
 import { createTestAdmittedRunContext } from "../admitted-run-context.test-support.js";
 import { hashCliImageTurnEntryId } from "../cli-image-turn-correlation.js";
@@ -856,6 +859,57 @@ describe("executePreparedCliRun supervisor output capture", () => {
       message: "Credit balance is too low",
     });
   });
+
+  it.each([0, 1])(
+    "classifies Claude quota results and preserves reset guidance (exit %s)",
+    async (exitCode) => {
+      const { buildAnthropicProvider } = await vi.importActual<{
+        buildAnthropicProvider: () => ProviderPlugin;
+      }>(
+        resolveRelativeBundledPluginPublicModuleId({
+          fromModuleUrl: import.meta.url,
+          pluginId: "anthropic",
+          artifactBasename: "api.js",
+        }),
+      );
+      const registry = createEmptyPluginRegistry();
+      registry.providers.push({
+        pluginId: "anthropic",
+        provider: buildAnthropicProvider(),
+        source: "test",
+      });
+      setActivePluginRegistry(registry);
+      const message = "You've hit your session limit · resets 4:50am (America/Chicago)";
+      const stdout = `${JSON.stringify({ type: "result", is_error: true, result: message })}\n`;
+      supervisorSpawnMock.mockImplementationOnce(async (...args: unknown[]) => {
+        const input = args[0] as SupervisorSpawnInput;
+        input.onStdout?.(stdout);
+        return createManagedRun({
+          reason: "exit",
+          exitCode,
+          exitSignal: null,
+          durationMs: 50,
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+          noOutputTimedOut: false,
+        });
+      });
+      const error = await executePreparedCliRun(
+        buildPreparedCliRunContext({ output: "jsonl", provider: "claude-cli" }),
+      ).catch((err: unknown) => err);
+      expect(error).toMatchObject({ reason: "rate_limit", status: 429, message });
+      const reply = buildKnownAgentRunFailureReplyPayload({
+        err: error,
+        sessionCtx: { Provider: "matrix", Surface: "matrix", ChatType: "direct" },
+        resolvedVerboseLevel: "off",
+      });
+      expect(reply).toMatchObject({
+        text: "⚠️ Usage limit reached. Resets at 4:50am (America/Chicago). Try again after the reset.",
+        isError: true,
+      });
+    },
+  );
 
   it("surfaces a local Claude synthetic empty terminal through the output error path", async () => {
     const stdout = [

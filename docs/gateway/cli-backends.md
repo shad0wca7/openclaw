@@ -531,6 +531,14 @@ Claude CLI backends scale this cap with the resolved Claude context window inste
 
 ## Troubleshooting
 
+Claude Code subscription messages such as "You've hit your session limit" are
+rate limits, not expired logins or conversation errors. When the failure includes
+a recognizable reset clock time and time zone, OpenClaw includes those facts in
+the reply without forwarding the surrounding diagnostic text. Wait for that
+reset or select another available provider; logging in again or using `/new`
+does not renew the subscription quota. Existing model fallback policy still
+applies.
+
 When a local Claude Code subprocess fails, its run error includes a bounded,
 redacted stderr diagnostic when available. Check the run error or `openclaw logs`
 for the underlying launch, permission, or runtime failure. Successful turns do not
