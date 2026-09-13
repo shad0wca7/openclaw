@@ -74,7 +74,7 @@ Announce context is normalized to a stable internal event block:
 | Session ids    | Child session key/id                                                                                     |
 | Type           | Announce type + task label                                                                               |
 | Status         | Derived from runtime outcome (`ok`, `error`, `timeout`, or `unknown`) — **not** inferred from model text |
-| Result content | Latest visible assistant text from the child                                                             |
+| Result content | Captured final reply, or terminal transcript evidence linked to the exact child run                      |
 | Follow-up      | Instruction describing when to reply vs stay silent                                                      |
 
 The result is the child's complete visible final answer for the completed run.
@@ -91,6 +91,15 @@ answer remains authoritative.
 Completion delivery can read an existing registered archive when child cleanup
 finishes before the parent resumes. This does not add a post-cleanup retrieval
 feature.
+
+Execution outcome, result availability, and delivery status are separate facts.
+If a successful run is missing its completion snapshot, OpenClaw attempts a
+bounded recovery of its run-linked terminal assistant reply. Commentary, tool
+calls, and replies from other runs do not count. If no final reply can be
+verified, execution remains successful while the required deliverable is marked
+blocked with an unavailable-evidence notice. This does not establish that the
+work failed or that no reply was produced. Explicit silent and empty completion
+snapshots remain authoritative; delivery failures do not change execution outcome.
 
 Terminal failed runs report failure status without replaying captured
 reply text. Tool/toolResult output is not promoted into child result text.

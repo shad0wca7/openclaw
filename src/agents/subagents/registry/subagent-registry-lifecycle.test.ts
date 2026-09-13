@@ -647,20 +647,125 @@ describe("subagent registry lifecycle hardening", () => {
     },
   );
 
-  it("fails a required successful completion without producer reply evidence", async () => {
+  it("recovers required success from run-linked final evidence before classifying it", async () => {
     const entry = createRunEntry({ expectsCompletionMessage: true });
-    const captureSubagentCompletionReply = vi.fn(async () => "stale transcript reply");
+    const captureSubagentCompletionReply = vi.fn<
+      SubagentLifecycleOptions["captureSubagentCompletionReply"]
+    >(async (_key, options) =>
+      options?.runId === entry.runId ? "Recovered final report" : "stale transcript reply",
+    );
     const controller = createLifecycleController({ entry, captureSubagentCompletionReply });
-
     await completeRun(controller, entry, { terminalReply: undefined });
-
-    expect(entry.endedReason).toBe(SUBAGENT_ENDED_REASON_ERROR);
-    expect(entry.execution.outcome).toMatchObject({
-      status: "error",
-      error: "subagent run ended before producing a final reply",
+    expect(entry.execution.outcome).toMatchObject({ status: "ok" });
+    expect(entry.completion).toMatchObject({
+      terminalReply: { disposition: "visible", text: "Recovered final report" },
+      resultText: "Recovered final report",
     });
+    expect(taskExecutorMocks.failTaskRunByRunId).not.toHaveBeenCalled();
+  });
+
+  it("keeps execution success separate from unavailable required completion evidence", async () => {
+    const entry = createRunEntry({ expectsCompletionMessage: true });
+    const captureSubagentCompletionReply = vi.fn<
+      SubagentLifecycleOptions["captureSubagentCompletionReply"]
+    >(async (_key, options) => (options?.runId ? undefined : "stale transcript reply"));
+    const controller = createLifecycleController({ entry, captureSubagentCompletionReply });
+    await completeRun(controller, entry, { terminalReply: undefined });
+    expect(entry.endedReason).toBe(SUBAGENT_ENDED_REASON_COMPLETE);
+    expect(entry.execution.outcome).toMatchObject({ status: "ok" });
     expect(entry.completion?.resultText).toBeNull();
-    expect(captureSubagentCompletionReply).not.toHaveBeenCalled();
+    expect(taskExecutorMocks.failTaskRunByRunId).not.toHaveBeenCalled();
+    expect(taskExecutorMocks.completeTaskRunByRunId).toHaveBeenCalledWith(
+      expect.objectContaining({
+        terminalOutcome: "blocked",
+        terminalSummary: "Execution completed, but run-linked final reply evidence is unavailable.",
+      }),
+    );
+    expect(captureSubagentCompletionReply).toHaveBeenCalledOnce();
+  });
+
+  it.each(["silent", "empty"] as const)(
+    "preserves late %s producer evidence during run-linked recovery",
+    async (disposition) => {
+      const entry = createRunEntry({ expectsCompletionMessage: true });
+      const captureSubagentCompletionReply = vi.fn(async () => {
+        entry.completion = {
+          required: true,
+          terminalReply: { disposition },
+          resultText: null,
+          capturedAt: 4_000,
+        };
+        return "Recovered transcript text";
+      });
+      await completeRun(
+        createLifecycleController({ entry, captureSubagentCompletionReply }),
+        entry,
+        { terminalReply: undefined },
+      );
+      expect(entry.completion?.terminalReply).toEqual({ disposition });
+      expect(entry.completion?.resultText).not.toBe("Recovered transcript text");
+    },
+  );
+
+  it("retains late producer evidence when a newer generation supersedes transcript recovery", async () => {
+    const entry = createRunEntry({ expectsCompletionMessage: true, generation: 1 });
+    const runs = new Map([[entry.runId, entry]]);
+    const captureSubagentCompletionReply = vi.fn(async () => {
+      entry.completion = {
+        required: true,
+        terminalReply: { disposition: "visible", text: "Producer final" },
+        resultText: "Producer final",
+        capturedAt: 4_000,
+      };
+      const successor = createRunEntry({
+        runId: "successor",
+        childSessionKey: entry.childSessionKey,
+        generation: 2,
+        createdAt: entry.createdAt + 1,
+      });
+      runs.set(successor.runId, successor);
+      return "Recovered transcript text";
+    });
+    await completeRun(
+      createLifecycleController({ entry, runs, captureSubagentCompletionReply }),
+      entry,
+      { terminalReply: undefined },
+    );
+    expect(entry.completion).toMatchObject({
+      terminalReply: { disposition: "visible", text: "Producer final" },
+      resultText: "Producer final",
+    });
+  });
+
+  it("preserves execution success when run-linked capture throws", async () => {
+    const entry = createRunEntry({ expectsCompletionMessage: true });
+    const captureSubagentCompletionReply = vi.fn(async () => {
+      throw new Error("transcript unavailable");
+    });
+    await completeRun(createLifecycleController({ entry, captureSubagentCompletionReply }), entry, {
+      terminalReply: undefined,
+    });
+    expect(entry.execution.outcome).toMatchObject({ status: "ok" });
+    expect(entry.completion?.resultText).toBeNull();
+  });
+
+  it("does not publish recovered text after its registry row is replaced", async () => {
+    const entry = createRunEntry({ expectsCompletionMessage: true });
+    const replacement = createRunEntry({ runId: entry.runId, generation: 2 });
+    const runs = new Map([[entry.runId, entry]]);
+    const captureSubagentCompletionReply = vi.fn(async () => {
+      runs.set(entry.runId, replacement);
+      return "Obsolete final";
+    });
+    const persistOrThrow = vi.fn();
+    await completeRun(
+      createLifecycleController({ entry, runs, captureSubagentCompletionReply, persistOrThrow }),
+      entry,
+      { terminalReply: undefined },
+    );
+    expect(replacement.completion?.resultText).toBeUndefined();
+    expect(persistOrThrow).not.toHaveBeenCalled();
+    expect(taskExecutorMocks.completeTaskRunByRunId).not.toHaveBeenCalled();
   });
 
   it("keeps reply-optional successful completion compatible without evidence", async () => {
@@ -2221,6 +2326,39 @@ describe("subagent registry lifecycle hardening", () => {
     expect(captureSubagentCompletionReply).not.toHaveBeenCalled();
     expect(entry.completion?.resultText).toBeUndefined();
   });
+
+  it("requires run-linked evidence when refilling a missing frozen result", async () => {
+    const entry = createRunEntry({
+      expectsCompletionMessage: true,
+      endedAt: 4_000,
+      outcome: { status: "ok" },
+    });
+    const captureSubagentCompletionReply = vi.fn<
+      SubagentLifecycleOptions["captureSubagentCompletionReply"]
+    >(async (_key, options) => (options?.runId === entry.runId ? "Run final" : "Foreign final"));
+    const controller = createLifecycleController({ entry, captureSubagentCompletionReply });
+    expect(await controller.refreshFrozenResultFromSession(entry.childSessionKey)).toBe(true);
+    expect(entry.completion).toMatchObject({
+      resultText: "Run final",
+      terminalReply: { disposition: "visible", text: "Run final" },
+    });
+  });
+
+  it.each(["silent", "empty"] as const)(
+    "does not refill authoritative %s completion with transcript output",
+    async (disposition) => {
+      const entry = createRunEntry({
+        expectsCompletionMessage: true,
+        endedAt: 4_000,
+        outcome: { status: "ok" },
+        completion: { required: true, terminalReply: { disposition }, resultText: null },
+      });
+      const captureSubagentCompletionReply = vi.fn(async () => "Foreign final");
+      const controller = createLifecycleController({ entry, captureSubagentCompletionReply });
+      expect(await controller.refreshFrozenResultFromSession(entry.childSessionKey)).toBe(false);
+      expect(captureSubagentCompletionReply).not.toHaveBeenCalled();
+    },
+  );
 
   it("refreshes only the newest pending completion generation for a shared session", async () => {
     const childSessionKey = "agent:main:subagent:shared-refresh";

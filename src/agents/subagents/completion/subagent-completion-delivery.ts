@@ -32,7 +32,10 @@ import {
   SUSPENDED_RETENTION_MS,
 } from "./subagent-completion-admission.store.js";
 import { SUBAGENT_COMPLETION_OUTCOME_INSTRUCTION } from "./subagent-completion-instructions.js";
-import { resolveSubagentCompletionResultText } from "./subagent-completion-result.js";
+import {
+  SUBAGENT_COMPLETION_EVIDENCE_UNAVAILABLE,
+  resolveSubagentCompletionResultText,
+} from "./subagent-completion-result.js";
 
 const CLAIM_LEASE_MS = 125_000;
 const MAX_DELIVERY_GENERATION = 10;
@@ -152,7 +155,15 @@ export function resolveCorrelatedSubagentDelivery(
   ) {
     throw new SessionDeliveryDeferredError("correlated subagent delivery owner mismatch");
   }
-  const result = resolveSubagentCompletionResultText(entry) ?? "(no output)";
+  const result =
+    resolveSubagentCompletionResultText(entry) ??
+    (entry.completion?.required &&
+    entry.execution.outcome?.status === "ok" &&
+    !entry.completion.terminalReply &&
+    !entry.completion.resultText?.trim() &&
+    !entry.completion.fallbackResultText?.trim()
+      ? SUBAGENT_COMPLETION_EVIDENCE_UNAVAILABLE
+      : "(no output)");
   return {
     ...queued,
     message: `${CANONICAL_RESULT_PROMPT}\n\n${result}`,

@@ -1,6 +1,9 @@
 import type { AgentRunTerminalReplySnapshot } from "../../agent-run-terminal-reply.types.js";
 import { selectDeliverableSessionsReply } from "../../tools/sessions-send-tokens.js";
 
+export const SUBAGENT_COMPLETION_EVIDENCE_UNAVAILABLE =
+  "Execution completed, but run-linked final reply evidence is unavailable.";
+
 /** Selects the canonical operator-visible result from captured completion state. */
 export function resolveSubagentCompletionResultText(entry: {
   completion?: {

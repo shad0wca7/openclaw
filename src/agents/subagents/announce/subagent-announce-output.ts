@@ -1,5 +1,6 @@
 import { formatCompactTokenCount } from "@openclaw/normalization-core";
 import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 /**
  * Subagent completion output capture.
  *
@@ -14,6 +15,8 @@ import { findSessionTranscriptArchiveEventReadOnly } from "../../../config/sessi
 import { resolveFreshSessionTotalTokens } from "../../../config/sessions/types.js";
 import { isFastTestRuntimeEnv } from "../../../infra/env.js";
 import { formatDurationCompact } from "../../../infra/format-time/format-duration.js";
+import { readSessionTranscriptRunId } from "../../../sessions/transcript-events.js";
+import { resolveAssistantMessagePhase } from "../../../shared/chat-message-content.js";
 import { isContractToolCallBlock } from "../../../shared/tool-block-contract.js";
 import { buildAgentRunTerminalOutcomeFromWaitResult } from "../../agent-run-terminal-outcome.js";
 import { extractStoredAssistantText } from "../../tools/chat-history-text.js";
@@ -206,7 +209,7 @@ function selectSubagentOutputText(
 export async function readSubagentOutput(
   sessionKey: string,
   outcome?: SubagentRunOutcome,
-  options?: { sessionTarget?: SessionTranscriptRuntimeTarget },
+  options?: { sessionTarget?: SessionTranscriptRuntimeTarget; runId?: string },
 ): Promise<string | undefined> {
   let messages: unknown[] | undefined;
   if (options?.sessionTarget) {
@@ -225,6 +228,29 @@ export async function readSubagentOutput(
         })
       : undefined;
   const sourceMessages = messages ?? (Array.isArray(history?.messages) ? history.messages : []);
+  if (options?.runId !== undefined) {
+    // A stopped commentary item is not a completed Codex turn. Its mirror
+    // attests the final row separately; other producers use terminal stopReason.
+    const final = sourceMessages.findLast(
+      (message) =>
+        isRecord(message) &&
+        message.role === "assistant" &&
+        readSessionTranscriptRunId(message) === options.runId,
+    );
+    if (!isRecord(final)) {
+      return undefined;
+    }
+    const metadata = isRecord(final["__openclaw"]) ? final["__openclaw"] : undefined;
+    if (
+      final.stopReason !== "stop" ||
+      countAssistantToolCalls(final) !== 0 ||
+      resolveAssistantMessagePhase(final) === "commentary" ||
+      (metadata?.mirrorOrigin === "codex-app-server" && metadata.runTerminal !== true)
+    ) {
+      return undefined;
+    }
+    return extractStoredAssistantText(final)?.trim() || undefined;
+  }
   const snapshot = summarizeSubagentOutputHistory(sourceMessages);
   const selected = selectSubagentOutputText(snapshot, outcome);
   if (selected?.trim()) {
@@ -237,13 +263,15 @@ export async function readLatestSubagentOutputWithRetry(params: {
   sessionKey: string;
   maxWaitMs: number;
   outcome?: SubagentRunOutcome;
+  runId?: string;
 }): Promise<string | undefined> {
   return await readLatestSubagentOutputWithRetryUsing({
     sessionKey: params.sessionKey,
     maxWaitMs: params.maxWaitMs,
     outcome: params.outcome,
     retryIntervalMs: isFastTestMode() ? FAST_TEST_RETRY_INTERVAL_MS : 100,
-    readSubagentOutput,
+    readSubagentOutput: (sessionKey, outcome) =>
+      readSubagentOutput(sessionKey, outcome, { runId: params.runId }),
   });
 }
 
@@ -339,6 +367,7 @@ export async function captureSubagentCompletionReply(
     waitForReply?: boolean;
     outcome?: SubagentRunOutcome;
     sessionTarget?: SessionTranscriptRuntimeTarget;
+    runId?: string;
   },
 ): Promise<string | undefined> {
   return await captureSubagentCompletionReplyUsing({
@@ -349,6 +378,7 @@ export async function captureSubagentCompletionReply(
     readSubagentOutput: async (nextSessionKey) =>
       await readSubagentOutput(nextSessionKey, options?.outcome, {
         sessionTarget: options?.sessionTarget,
+        runId: options?.runId,
       }),
   });
 }
