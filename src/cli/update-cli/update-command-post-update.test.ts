@@ -19,6 +19,7 @@ import {
   finishSuccessfulPackageSwitch,
   expectFailureReport,
   expectUpdateFailure,
+  inspectStoppedService,
   managedServiceState,
   mockVerifiedGatewayRun,
   programArguments,
@@ -26,6 +27,7 @@ import {
   registerManagedInstallEnvironmentTest,
   recordVerifiedGatewayRun,
   successfulPluginUpdate,
+  stoppedIntervalOutcomes,
   taskRecovery,
   validConfigSnapshot,
 } from "./update-command-post-update.test-support.js";
@@ -624,15 +626,10 @@ describe("successful update finalization ordering", () => {
       identity.restore();
     });
 
-    it.each([
-      { outcome: "unchanged", stoppedAtMs: 500, downtimeMs: 10_700 },
-      { outcome: "restarted", stoppedAtMs: 500, downtimeMs: 11_000 },
-      { outcome: "rolled-back", stoppedAtMs: 500, downtimeMs: 11_500 },
-      { outcome: "rolled-back", stoppedAtMs: 0, downtimeMs: 12_000 },
-      { outcome: "unverified", stoppedAtMs: 500, downtimeMs: null },
-    ] as const)(
+    it.each(stoppedIntervalOutcomes)(
       "keeps plugin convergence stopped and measures the full interval through verification ($outcome, initial stop=$stoppedAtMs)",
       async ({ outcome, stoppedAtMs, downtimeMs }) => {
+        mocks.stopService.mockImplementation(inspectStoppedService);
         const changed = outcome !== "unchanged";
         const restartFailed = outcome === "rolled-back" || outcome === "unverified";
         const packageRoot = tempDirs.make("update-downtime-installed-runtime-");
@@ -760,7 +757,7 @@ describe("successful update finalization ordering", () => {
           "start",
           ...(restartFailed ? ["rollback"] : []),
         ]);
-        expect(mocks.stopService).not.toHaveBeenCalled();
+        expect(mocks.stopService).toHaveBeenCalledTimes(changed ? 1 : 0);
         expect(oldRecovery.restore).toHaveBeenCalledWith(true, expect.any(Function), undefined);
         expect(oldRecovery.complete).toHaveBeenLastCalledWith(outcome !== "unverified");
         expect(windowsEvents.at(-1)).toBe("old-complete");

@@ -161,10 +161,10 @@ export async function convergeUpdatePlugins(params: {
       let targetRuntimeConverged = false;
       let maintenanceDeferred = false;
       if (shouldResumePostCoreInFreshProcess) {
-        if (retainedDifferentRuntime && params.opts.run?.completionOwner === "gateway-restart") {
-          await params.beforeDoctor?.();
-          assertCurrent?.();
-        }
+        // The parent retains service custody; the target child owns runtime generation.
+        // Both possible beforeDoctor implementations self-gate on their own conditions.
+        await params.beforeDoctor?.();
+        assertCurrent?.();
         const freshProcessResult = await continuePostCoreUpdateInFreshProcess({
           root: postUpdateRoot,
           channel: params.channel,

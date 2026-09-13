@@ -646,3 +646,32 @@ export function registerUnverifiedDefinitionRecoveryTest(options: {
     });
   });
 }
+
+export function inspectStoppedService(
+  params: Parameters<
+    typeof import("./update-command-service.js").maybeStopManagedServiceBeforeMutableUpdate
+  >[0],
+) {
+  expect(params.phase).toBe("inspect");
+  return Promise.resolve({
+    running: false,
+    offline: true,
+    stopped: false,
+    inspected: true,
+    runtimeInspected: true,
+    serviceUpdateVerdict: {
+      kind: "owned" as const,
+      root: params.root,
+      fingerprint: "sealed",
+      refreshDefinition: false,
+    },
+  });
+}
+
+export const stoppedIntervalOutcomes = [
+  { outcome: "unchanged", stoppedAtMs: 500, downtimeMs: 10_700 },
+  { outcome: "restarted", stoppedAtMs: 500, downtimeMs: 11_000 },
+  { outcome: "rolled-back", stoppedAtMs: 500, downtimeMs: 11_500 },
+  { outcome: "rolled-back", stoppedAtMs: 0, downtimeMs: 12_000 },
+  { outcome: "unverified", stoppedAtMs: 500, downtimeMs: null },
+] as const;
