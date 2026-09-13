@@ -60,6 +60,62 @@ describe("resolveUpdateBuildManager", () => {
     );
   });
 
+  it.each(["10.0.0", "11.15.1"])(
+    "observes pnpm %s without letting its launcher rewrite the target lockfile",
+    async (installedVersion) => {
+      const version = "12.3.4";
+      const root = await checkout(version);
+      const lockfile = path.join(root, "pnpm-lock.yaml");
+      const originalLockfile = "fixture target lockfile\n";
+      await fs.writeFile(lockfile, originalLockfile);
+      const baseEnv = {
+        PATH: "/fixture/bin",
+        pnpm_config_pm_on_fail: "download",
+        PNPM_CONFIG_PM_ON_FAIL: "download",
+        npm_config_manage_package_manager_versions: "true",
+        NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS: "true",
+      };
+      let prefix = "";
+      const runCommand: PackageManagerCommandRunner = async (argv, options) => {
+        const key = argv.join(" ");
+        if (key === "pnpm --version") {
+          const switchingDisabled = installedVersion.startsWith("10.")
+            ? options.env?.npm_config_manage_package_manager_versions === "false"
+            : options.env?.pnpm_config_pm_on_fail === "ignore";
+          if (!switchingDisabled) {
+            // Version-switching launchers mutate before reporting the requested version.
+            await fs.writeFile(lockfile, "rewritten by launcher\n");
+            return { stdout: version, stderr: "", code: 0 };
+          }
+          return { stdout: prefix ? version : installedVersion, stderr: "", code: 0 };
+        }
+        if (key === "corepack --version") {
+          throw new Error("missing corepack");
+        }
+        expect(options.env).toEqual(baseEnv);
+        if (key === "npm --version") {
+          return { stdout: "11.0.0", stderr: "", code: 0 };
+        }
+        expect(argv.slice(0, 3)).toEqual(["npm", "install", "--prefix"]);
+        expect(argv[4]).toBe(`pnpm@${version}`);
+        prefix = argv[3]!;
+        return { stdout: "installed", stderr: "", code: 0 };
+      };
+      const result = await resolveUpdateBuildManager(runCommand, root, 5000, baseEnv);
+      expect(await fs.readFile(lockfile, "utf8")).toBe(originalLockfile);
+      expect(prefix).not.toBe("");
+      expect(result.kind).toBe("resolved");
+      if (result.kind !== "resolved") {
+        throw new Error(result.reason);
+      }
+      // Probe-only flags must not disable normal target-version handling during installation.
+      expect(result.env?.pnpm_config_pm_on_fail).toBe("download");
+      expect(result.env?.npm_config_manage_package_manager_versions).toBe("true");
+      expect(baseEnv.pnpm_config_pm_on_fail).toBe("download");
+      await result.cleanup?.();
+    },
+  );
+
   it.each(["11.22.0", "12.0.0"])(
     "bootstraps the target checkout's exact pnpm %s via npm instead of global pnpm 10",
     async (version) => {

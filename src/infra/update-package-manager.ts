@@ -73,7 +73,24 @@ async function isManagerAvailable(
   expectedVersion?: string,
 ): Promise<boolean> {
   try {
-    const res = await runCommand([manager, "--version"], { timeoutMs, env });
+    // Observe the installed launcher, not a version it downloads for this checkout.
+    // pnpm 11+ otherwise rewrites the environment lock before even --version;
+    // pnpm 10 uses the older version-management setting. Limit both to this probe.
+    const probeEnv =
+      manager === "pnpm"
+        ? {
+            ...(env ?? process.env),
+            pnpm_config_pm_on_fail: "ignore",
+            PNPM_CONFIG_PM_ON_FAIL: "ignore",
+            npm_config_pm_on_fail: "ignore",
+            NPM_CONFIG_PM_ON_FAIL: "ignore",
+            pnpm_config_manage_package_manager_versions: "false",
+            PNPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS: "false",
+            npm_config_manage_package_manager_versions: "false",
+            NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS: "false",
+          }
+        : env;
+    const res = await runCommand([manager, "--version"], { timeoutMs, env: probeEnv });
     return res.code === 0 && (!expectedVersion || res.stdout.trim() === expectedVersion);
   } catch {
     return false;
