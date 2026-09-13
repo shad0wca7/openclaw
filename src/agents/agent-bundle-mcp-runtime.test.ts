@@ -44,10 +44,12 @@ import {
 } from "./agent-bundle-mcp-tools.js";
 import type { SessionMcpRuntime } from "./agent-bundle-mcp-types.js";
 import { writeExecutable } from "./bundle-mcp-shared.test-harness.js";
+import { hasModelFallbackStop, resolveModelFallbackError } from "./failover-error.js";
 import { updateMcpAppModelContext } from "./mcp-app-model-context.js";
 import { createMcpProofPluginRegistry } from "./mcp-connection-resolver.test-fixtures.js";
 import { fetchMcpAppView, getMcpAppViewLease } from "./mcp-ui-resource.js";
 import { testing as mcpUiResourceTesting } from "./mcp-ui-resource.test-support.js";
+import { runWithModelFallback } from "./model-fallback-runner.js";
 import { createAgentCleanupScope } from "./run-cleanup-timeout.js";
 
 vi.mock("./embedded-agent-mcp.js", async (importOriginal) => {
@@ -6197,6 +6199,8 @@ process.stdin.on("end", () => {
         ]);
         expect(staleTerminations).toEqual(["server-session-1"]);
         expect(invalidAuthHeaders).toEqual([]);
+        await runtime.dispose();
+        await expect(runtime.joinCleanup?.()).resolves.toBeUndefined();
       } finally {
         await runtime?.dispose();
         await new Promise<void>((resolve, reject) => {
@@ -6384,7 +6388,22 @@ process.stdin.on("end", () => {
         });
         const cleanupScope = createAgentCleanupScope();
         await cleanupScope.run(async () => {
-          await expect(materialized.dispose()).rejects.toThrow("could not confirm closure");
+          const failure = await materialized.dispose().catch((error: unknown) => error);
+          expect(failure).toBeInstanceOf(Error);
+          expect(hasModelFallbackStop(failure)).toBe(true);
+          expect(resolveModelFallbackError(failure)).toEqual({ kind: "terminal", error: failure });
+          const run = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue("wrong model");
+          await expect(
+            runWithModelFallback({
+              provider: "fixture-provider",
+              model: "fixture-model",
+              manifestPlugins: [],
+              fallbacksOverride: ["fixture-next/fixture-model"],
+              run,
+            }),
+          ).rejects.toBe(failure);
+          expect(run).toHaveBeenCalledOnce();
+          expect(String(failure)).toContain("MCP runtime cleanup could not confirm closure");
           await expect(materialized.dispose()).rejects.toThrow("could not confirm closure");
         });
         expect(cleanupScope.outcome).toBe("uncertain");
