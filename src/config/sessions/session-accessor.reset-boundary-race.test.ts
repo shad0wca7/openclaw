@@ -243,4 +243,55 @@ describe("reset boundary concurrency", () => {
       );
     }
   });
+
+  it("preserves unusual and duplicate navigation members while projecting reset metadata", async () => {
+    const sessionId = "reset-navigation-members";
+    await upsertSessionEntryCore(
+      { sessionKey: "agent:main:reset-navigation-members", storePath },
+      { sessionId, updatedAt: 10 },
+    );
+    const database = agentDatabase.openOpenClawAgentDatabase({
+      agentId: "main",
+      path: resolveSqliteTargetFromSessionStorePath(storePath, { agentId: "main" }).path,
+    });
+    const fixtures = [
+      {
+        raw: '{"type":"message","id":"first","id":"last","parentId":null,"message":{"role":"user","role":"assistant","content":"opaque"}}',
+        projected: { type: "message", id: "last", parentId: null, message: { role: "user" } },
+      },
+      {
+        raw: '{"type":"leaf","id":true,"targetId":false,"appendParentId":{"nested":[true,false,null]},"timestamp":-0,"message":{"role":["user"]}}',
+        projected: {
+          type: "leaf",
+          id: true,
+          targetId: false,
+          appendParentId: { nested: [true, false, null] },
+          timestamp: 0,
+          message: { role: ["user"] },
+        },
+      },
+      {
+        raw: '{"type":"reset","firstKeptEntryId":"kept","timestamp":1.2345678901234567,"message":{"role":null},"details":{"body":"opaque"}}',
+        projected: {
+          type: "reset",
+          firstKeptEntryId: "kept",
+          timestamp: 1.2345678901234567,
+          message: { role: null },
+        },
+      },
+    ];
+    const insert = database.db.prepare(
+      "INSERT INTO transcript_events (session_id, seq, event_json, created_at) VALUES (?, ?, ?, ?)",
+    );
+    fixtures.forEach(({ raw }, seq) => insert.run(sessionId, seq, raw, seq));
+    expect(
+      loadTranscriptEventsFromDatabase(database, sessionId, { projection: "reset-boundary" }),
+    ).toEqual(fixtures.map(({ projected }) => projected));
+    expect(
+      database.db
+        .prepare("SELECT event_json FROM transcript_events WHERE session_id = ? ORDER BY seq")
+        .all(sessionId)
+        .map((row) => row.event_json),
+    ).toEqual(fixtures.map(({ raw }) => raw));
+  });
 });
