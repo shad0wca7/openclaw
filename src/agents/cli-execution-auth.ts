@@ -82,12 +82,14 @@ export function resolveCliExecutionAuthProfileId(params: {
     includeSetupRegistry: true,
   });
   const acceptsCredential = (credential: AuthProfileCredential, explicitSelection: boolean) =>
-    credential.provider === params.cliExecutionProvider ||
-    (credential.provider === canonicalProvider &&
-      (params.cliExecutionProvider === CLAUDE_CLI_PROVIDER_ID
-        ? explicitSelection || credential.type !== "api_key"
-        : params.cliExecutionProvider === GOOGLE_GEMINI_CLI_PROVIDER_ID &&
-          credential.type === "api_key"));
+    (params.cliExecutionProvider !== CLAUDE_CLI_PROVIDER_ID ||
+      explicitSelection ||
+      credential.type !== "api_key") &&
+    (credential.provider === params.cliExecutionProvider ||
+      (credential.provider === canonicalProvider &&
+        (params.cliExecutionProvider === CLAUDE_CLI_PROVIDER_ID ||
+          (params.cliExecutionProvider === GOOGLE_GEMINI_CLI_PROVIDER_ID &&
+            credential.type === "api_key"))));
   if (retainedProfileId) {
     const credential = store.profiles[retainedProfileId];
     if (!credential) {

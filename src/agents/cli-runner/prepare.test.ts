@@ -99,6 +99,9 @@ import {
   setCliAuthEpochTestDeps,
 } from "../cli-auth-epoch.test-support.js";
 import { testing as cliBackendsTesting } from "../cli-backends.test-support.js";
+// Exercises CLI run preparation: auth boundaries, prompt hooks, context
+// injection, MCP loopback setup, and reusable session decisions.
+import { resolveCliExecutionAuthProfileId } from "../cli-execution-auth.js";
 import {
   buildDefaultTestCliBackend,
   createCliRunnerPrepareFixture,
@@ -1606,6 +1609,12 @@ describe("prepareCliRunContext", () => {
       autoSelectAuthProfile: false,
       expectedAuthProfileId: undefined,
     },
+    {
+      name: "preserves native login through dispatcher selection and preparation",
+      autoSelectAuthProfile: false,
+      expectedAuthProfileId: undefined,
+      dispatch: true,
+    },
   ])("$name", async (testCase) => {
     const { dir } = fixture.session;
     const agentDir = path.join(dir, "agents", "main", "agent");
@@ -1628,7 +1637,17 @@ describe("prepareCliRunContext", () => {
       authEpochMode: "profile-only",
       autoSelectAuthProfile: testCase.autoSelectAuthProfile,
     });
+    const dispatchedProfileId = testCase.dispatch
+      ? resolveCliExecutionAuthProfileId({
+          cliExecutionProvider: "claude-cli",
+          authProfileProvider: "anthropic",
+          config: {},
+          agentDir,
+          selected: { authProfileId, authProfileIdSource: "auto" },
+        })
+      : undefined;
     const context = await fixture.prepare({
+      authProfileId: dispatchedProfileId,
       sessionKey: "agent:main:main",
       agentDir,
       provider: "claude-cli",

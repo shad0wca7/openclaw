@@ -29,6 +29,7 @@ describe("resolveCliExecutionAuthProfileId", () => {
           id: "claude-cli",
           modelProvider: "anthropic",
           pluginId: "anthropic",
+          autoSelectAuthProfile: false,
           config: { command: "claude" },
         },
         {
@@ -116,6 +117,7 @@ describe("resolveCliExecutionAuthProfileId", () => {
                   backend: {
                     id: "claude-cli",
                     modelProvider: "anthropic",
+                    autoSelectAuthProfile: false,
                     config: { command: "claude" },
                   },
                 }
@@ -178,7 +180,7 @@ describe("resolveCliExecutionAuthProfileId", () => {
   });
 
   it.each(["absent", "auto"] as const)(
-    "forwards only automatic Claude profiles owned by Claude CLI (%s selection)",
+    "preserves native Claude authentication with only saved API keys (%s selection)",
     (selection) => {
       const selected =
         selection === "auto"
@@ -211,7 +213,103 @@ describe("resolveCliExecutionAuthProfileId", () => {
           agentDir: "/tmp/unused-agent",
           selected,
         }),
-      ).toBe("claude-cli:work");
+      ).toBeUndefined();
+    },
+  );
+
+  it("does not forward an automatically selected CLI-owned Claude profile", () => {
+    mocks.profiles["claude-cli:default"] = {
+      type: "api_key",
+      provider: "claude-cli",
+      key: "synthetic-stale-key",
+    };
+    mocks.order.push("claude-cli:default");
+    expect(
+      resolveCliExecutionAuthProfileId({
+        cliExecutionProvider: "claude-cli",
+        authProfileProvider: "anthropic",
+        config: {},
+        agentDir: "/tmp/unused-agent",
+        selected: { authProfileId: "claude-cli:default", authProfileIdSource: "auto" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    { provider: "anthropic", type: "token" },
+    { provider: "anthropic", type: "oauth" },
+    { provider: "claude-cli", type: "token" },
+    { provider: "claude-cli", type: "oauth" },
+  ] as const)(
+    "forwards an ordered $provider $type after skipping an automatic CLI API key",
+    ({ provider, type }) => {
+      const authProfileId = `${provider}:subscription`;
+      mocks.profiles["claude-cli:default"] = {
+        type: "api_key",
+        provider: "claude-cli",
+        key: "synthetic-stale-key",
+      };
+      mocks.profiles[authProfileId] =
+        type === "token"
+          ? { type, provider, token: "synthetic-subscription-token" }
+          : {
+              type,
+              provider,
+              access: "synthetic-subscription-access",
+              refresh: "synthetic-subscription-refresh",
+              expires: Date.now() + 60_000,
+            };
+      mocks.order.push("claude-cli:default", authProfileId);
+      expect(
+        resolveCliExecutionAuthProfileId({
+          cliExecutionProvider: "claude-cli",
+          authProfileProvider: "anthropic",
+          config: {},
+          agentDir: "/tmp/unused-agent",
+          selected: { authProfileId: "claude-cli:default", authProfileIdSource: "auto" },
+        }),
+      ).toBe(authProfileId);
+    },
+  );
+
+  it("preserves a native session binding when a saved subscription appears", () => {
+    mocks.profiles["anthropic:subscription"] = {
+      type: "token",
+      provider: "anthropic",
+      token: "synthetic-subscription-token",
+    };
+    mocks.order.push("anthropic:subscription");
+    expect(
+      resolveCliExecutionAuthProfileId({
+        cliExecutionProvider: "claude-cli",
+        authProfileProvider: "anthropic",
+        config: {},
+        agentDir: "/tmp/unused-agent",
+        sessionBinding: { sessionId: "native-session" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it.each(["explicit", "bound"] as const)(
+    "preserves an %s CLI API-key identity for backend validation",
+    (selection) => {
+      const authProfileId = "claude-cli:work";
+      mocks.profiles[authProfileId] = {
+        type: "api_key",
+        provider: "claude-cli",
+        key: "synthetic-explicit-key",
+      };
+      expect(
+        resolveCliExecutionAuthProfileId({
+          cliExecutionProvider: "claude-cli",
+          authProfileProvider: "anthropic",
+          config: {},
+          agentDir: "/tmp/unused-agent",
+          ...(selection === "explicit"
+            ? { selected: { authProfileId, authProfileIdSource: "user" as const } }
+            : { sessionBinding: { sessionId: "saved-session", authProfileId } }),
+        }),
+      ).toBe(authProfileId);
     },
   );
 
