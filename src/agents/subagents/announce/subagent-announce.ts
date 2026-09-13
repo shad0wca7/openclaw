@@ -39,6 +39,7 @@ import {
   SUBAGENT_COMPLETION_OUTCOME_INSTRUCTION,
   SUBAGENT_PRIVATE_COMPLETION_INSTRUCTION,
 } from "../completion/subagent-completion-instructions.js";
+import { SUBAGENT_COMPLETION_EVIDENCE_UNAVAILABLE } from "../completion/subagent-completion-result.js";
 import {
   countPendingDescendantRuns,
   getLatestSubagentRunByChildSessionKey,
@@ -409,7 +410,10 @@ async function runSubagentAnnounceFlowBound(
     }
     if (!params.terminalReply) {
       if (childSessionEffectsAllowed() && !reply && allowFailedOutputCapture) {
-        reply = await readSubagentOutput(params.childSessionKey, outcome);
+        reply = await readSubagentOutput(params.childSessionKey, outcome, {
+          runId:
+            expectsCompletionMessage && outcome.status === "ok" ? params.childRunId : undefined,
+        });
       }
 
       if (childSessionEffectsAllowed() && !reply?.trim() && allowFailedOutputCapture) {
@@ -417,6 +421,8 @@ async function runSubagentAnnounceFlowBound(
           sessionKey: params.childSessionKey,
           maxWaitMs: params.timeoutMs,
           outcome,
+          runId:
+            expectsCompletionMessage && outcome.status === "ok" ? params.childRunId : undefined,
         });
       }
 
@@ -495,7 +501,14 @@ async function runSubagentAnnounceFlowBound(
     // Build status label
     const statusLabel =
       outcome.status === "ok"
-        ? "completed; ready for parent review"
+        ? expectsCompletionMessage &&
+          !childCompletionFindings &&
+          !reply &&
+          !params.terminalReply &&
+          !params.roundOneReply?.trim() &&
+          !params.fallbackReply?.trim()
+          ? "execution completed; final reply evidence unavailable"
+          : "completed; ready for parent review"
         : outcome.status === "timeout"
           ? outcome.error
             ? `timed out: ${outcome.error}`
@@ -510,7 +523,15 @@ async function runSubagentAnnounceFlowBound(
       : "unknown";
     // Descendant findings are wake input; only this child's own answer travels onward.
     const childResultText = reply;
-    const findings = childResultText || "(no output)";
+    const findings =
+      childResultText ||
+      (expectsCompletionMessage &&
+      outcome.status === "ok" &&
+      !params.terminalReply &&
+      !params.roundOneReply?.trim() &&
+      !params.fallbackReply?.trim()
+        ? SUBAGENT_COMPLETION_EVIDENCE_UNAVAILABLE
+        : "(no output)");
 
     let requesterIsSubagent = requesterIsInternalSession();
     if (requesterIsSubagent) {

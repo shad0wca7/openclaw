@@ -521,6 +521,21 @@ describe("readSubagentOutput", () => {
 });
 
 describe("buildChildCompletionFindings", () => {
+  it("reports missing evidence without claiming successful work produced no output", () => {
+    const findings = buildChildCompletionFindings([
+      {
+        childSessionKey: "child",
+        task: "task",
+        createdAt: 1,
+        completion: { required: true, resultText: null },
+        execution: { outcome: { status: "ok" } },
+      },
+    ]);
+    expect(findings).toContain(
+      "Execution completed, but run-linked final reply evidence is unavailable.",
+    );
+    expect(findings).not.toContain("(no output)");
+  });
   it.each([
     {
       name: "timeout with its preserved failure cause",

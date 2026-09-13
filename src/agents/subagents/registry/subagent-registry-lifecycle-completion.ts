@@ -21,6 +21,7 @@ import { updateSubagentArchiveAtMs } from "./subagent-registry-helpers.js";
 import { completeTerminalEffects } from "./subagent-registry-lifecycle-cleanup.js";
 import type { SubagentLifecycleCompletionContext } from "./subagent-registry-lifecycle-context.js";
 import {
+  captureRunTerminalReply,
   freezeRunResultAtCompletion,
   refreshPendingFinalDeliveryPayload,
   finalizeSubagentTaskRun,
@@ -33,8 +34,6 @@ import {
 
 type BrowserCleanupModule = typeof import("../../../browser-lifecycle-cleanup.js");
 type BrowserCleanup = BrowserCleanupModule["cleanupBrowserSessionsForLifecycleEnd"];
-
-const MISSING_REQUIRED_FINAL_REPLY_ERROR = "subagent run ended before producing a final reply";
 
 const browserCleanupLoader = createLazyImportLoader<BrowserCleanupModule>(
   () => import("../../../browser-lifecycle-cleanup.js"),
@@ -425,19 +424,40 @@ export async function completeSubagentRunAttempt(
         mutated = true;
       }
     }
-    const terminalReply = mergeAgentRunTerminalReplySnapshot(
+    let terminalReply = mergeAgentRunTerminalReplySnapshot(
       entry.completion?.terminalReply,
       completeParams.terminalReply,
     );
-    // Lifecycle events and agent.wait both settle here. A required success
-    // needs producer evidence before any transcript fallback can freeze it.
     if (
       entry.expectsCompletionMessage === true &&
       completionOutcome.status === "ok" &&
-      !terminalReply
+      !terminalReply &&
+      !entry.completion?.resultText?.trim()
     ) {
-      completionOutcome = { status: "error", error: MISSING_REQUIRED_FINAL_REPLY_ERROR };
-      completionReason = SUBAGENT_ENDED_REASON_ERROR;
+      const generation = entry.generation;
+      if (!recoveryRequested && !sessionSuperseded && entry.pauseReason !== "sessions_yield") {
+        terminalReply = await captureRunTerminalReply(context, entry, completionOutcome);
+        if (
+          params.runs.get(entry.runId) !== currentEntry ||
+          currentEntry.generation !== generation ||
+          currentEntry.pauseReason === "sessions_yield" ||
+          currentEntry.killIntent !== undefined
+        ) {
+          return;
+        }
+        // Producer evidence committed during the read outranks transcript inference.
+        sessionSuperseded = context.newerGenerationOwnsSession(entry);
+        terminalReply =
+          currentEntry.completion?.terminalReply ?? (sessionSuperseded ? undefined : terminalReply);
+      }
+      if (!terminalReply) {
+        // Execution success and a missing result are separate facts. Do not
+        // fabricate failure or let the generic latest-session fallback win.
+        const completion = ensureCompletionState(entry);
+        completion.resultText = null;
+        completion.capturedAt = endedAt;
+        mutated = true;
+      }
     }
     const outcome =
       recoveryRequested && entry.execution.outcome

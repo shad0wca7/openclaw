@@ -10,7 +10,10 @@ import {
   type DetachedTaskTerminalState,
 } from "../../../tasks/detached-task-runtime-contract.js";
 import { resolveRequiredCompletionTerminalResult } from "../../../tasks/task-completion-contract.js";
-import { resolveSubagentCompletionResultText } from "../completion/subagent-completion-result.js";
+import {
+  SUBAGENT_COMPLETION_EVIDENCE_UNAVAILABLE,
+  resolveSubagentCompletionResultText,
+} from "../completion/subagent-completion-result.js";
 import type { SubagentRunOutcome } from "../subagent-run-outcome.types.js";
 import {
   SUBAGENT_ENDED_REASON_KILLED,
@@ -82,7 +85,14 @@ export function resolveFinalizedSubagentTaskState(
         ? {}
         : entry.delivery?.disposition === "intentional_non_delivery"
           ? { terminalOutcome: "succeeded" as const, terminalSummary: null }
-          : resolveRequiredCompletionTerminalResult(progressSummary);
+          : !completion?.terminalReply &&
+              !completion?.resultText?.trim() &&
+              !completion?.fallbackResultText?.trim()
+            ? {
+                terminalOutcome: "blocked" as const,
+                terminalSummary: SUBAGENT_COMPLETION_EVIDENCE_UNAVAILABLE,
+              }
+            : resolveRequiredCompletionTerminalResult(progressSummary);
     return {
       status: "succeeded",
       endedAt,

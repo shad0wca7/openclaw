@@ -23,6 +23,7 @@ import {
   isTerminalTaskStatus,
   type TaskDeliveryStatus,
 } from "../../../tasks/task-registry.types.js";
+import { buildAgentRunTerminalReplySnapshot } from "../../agent-run-terminal-reply.js";
 import {
   buildAnnounceIdFromChildRun,
   buildAnnounceIdempotencyKey,
@@ -347,6 +348,59 @@ export const finalizeSubagentTaskRun = (
   return finalized;
 };
 
+const captureRunResult = async (
+  params: SubagentLifecycleOptions,
+  entry: SubagentRunRecord,
+  outcome: SubagentRunOutcome,
+  runId?: string,
+): Promise<string | undefined> => {
+  const transcriptTarget = entry.execution.transcriptTarget;
+  const agentId = transcriptTarget?.agentId ?? resolveAgentIdFromSessionKey(entry.childSessionKey);
+  const sessionKey = transcriptTarget?.sessionKey ?? entry.childSessionKey;
+  const configuredStorePath = agentId
+    ? (transcriptTarget?.storePath ??
+      resolveSessionStorePathCore(params.getRuntimeConfig().session?.store, { agentId }))
+    : undefined;
+  const storePath = configuredStorePath
+    ? resolveSessionStorePathForScope({
+        agentId,
+        sessionKey,
+        storePath: configuredStorePath,
+      })
+    : undefined;
+  const sessionId =
+    transcriptTarget?.sessionId ??
+    (agentId && storePath
+      ? loadSessionEntryReadOnly({ agentId, sessionKey, storePath })?.sessionId
+      : undefined);
+  const sessionTarget: SessionTranscriptRuntimeTarget | undefined =
+    agentId && sessionId && storePath ? { agentId, sessionId, sessionKey, storePath } : undefined;
+  return await withPluginRuntimeGatewayContextResolver(getGatewayContextResolver(entry), () =>
+    params.captureSubagentCompletionReply(entry.childSessionKey, {
+      waitForReply: entry.expectsCompletionMessage === true,
+      ...(runId !== undefined ? { runId } : {}),
+      outcome,
+      ...(sessionTarget ? { sessionTarget } : {}),
+    }),
+  );
+};
+
+export const captureRunTerminalReply = async (
+  context: SubagentLifecycleCommonContext,
+  entry: SubagentRunRecord,
+  outcome: SubagentRunOutcome,
+) => {
+  try {
+    const text = await captureRunResult(context.options, entry, outcome, entry.runId);
+    return text?.trim()
+      ? buildAgentRunTerminalReplySnapshot({ visibleText: text, rawText: text })
+      : undefined;
+  } catch {
+    // Missing/unreadable evidence is not an execution failure.
+    return undefined;
+  }
+};
+
 export const freezeRunResultAtCompletion = async (
   context: SubagentLifecycleCommonContext,
   entry: SubagentRunRecord,
@@ -364,37 +418,7 @@ export const freezeRunResultAtCompletion = async (
   }
   let resultText: string | null;
   try {
-    const transcriptTarget = entry.execution.transcriptTarget;
-    const agentId =
-      transcriptTarget?.agentId ?? resolveAgentIdFromSessionKey(entry.childSessionKey);
-    const sessionKey = transcriptTarget?.sessionKey ?? entry.childSessionKey;
-    const configuredStorePath = agentId
-      ? (transcriptTarget?.storePath ??
-        resolveSessionStorePathCore(params.getRuntimeConfig().session?.store, { agentId }))
-      : undefined;
-    const storePath = configuredStorePath
-      ? resolveSessionStorePathForScope({
-          agentId,
-          sessionKey,
-          storePath: configuredStorePath,
-        })
-      : undefined;
-    const sessionId =
-      transcriptTarget?.sessionId ??
-      (agentId && storePath
-        ? loadSessionEntryReadOnly({ agentId, sessionKey, storePath })?.sessionId
-        : undefined);
-    const sessionTarget: SessionTranscriptRuntimeTarget | undefined =
-      agentId && sessionId && storePath ? { agentId, sessionId, sessionKey, storePath } : undefined;
-    const captured = await withPluginRuntimeGatewayContextResolver(
-      getGatewayContextResolver(entry),
-      () =>
-        params.captureSubagentCompletionReply(entry.childSessionKey, {
-          waitForReply: entry.expectsCompletionMessage === true,
-          outcome,
-          ...(sessionTarget ? { sessionTarget } : {}),
-        }),
-    );
+    const captured = await captureRunResult(params, entry, outcome);
     resultText = captured?.trim() ? capFrozenResultText(captured) : null;
   } catch {
     resultText = null;
@@ -440,15 +464,18 @@ export const refreshFrozenResultFromSession = async (
     }
   }
   const entry = candidates.toSorted(compareSubagentRunGeneration).at(-1);
-  if (!entry || context.newerGenerationOwnsSession(entry)) {
+  if (!entry || entry.completion?.terminalReply || context.newerGenerationOwnsSession(entry)) {
     return false;
   }
   const generation = entry.generation;
 
   let captured: string | undefined;
   try {
-    captured = await withPluginRuntimeGatewayContextResolver(getGatewayContextResolver(entry), () =>
-      params.captureSubagentCompletionReply(sessionKey),
+    captured = await captureRunResult(
+      params,
+      entry,
+      entry.execution.outcome ?? { status: "unknown" },
+      entry.runId,
     );
   } catch {
     return false;
@@ -462,6 +489,9 @@ export const refreshFrozenResultFromSession = async (
   if (
     params.runs.get(entry.runId) !== entry ||
     entry.generation !== generation ||
+    entry.completion?.terminalReply !== undefined ||
+    entry.pauseReason === "sessions_yield" ||
+    entry.killIntent !== undefined ||
     context.newerGenerationOwnsSession(entry)
   ) {
     return false;
@@ -469,9 +499,10 @@ export const refreshFrozenResultFromSession = async (
 
   const nextFrozen = capFrozenResultText(trimmed);
   const completion = ensureCompletionState(entry);
-  if (completion.resultText === nextFrozen) {
-    return false;
-  }
+  completion.terminalReply = buildAgentRunTerminalReplySnapshot({
+    visibleText: trimmed,
+    rawText: trimmed,
+  });
   completion.resultText = nextFrozen;
   completion.capturedAt = Date.now();
   params.persist(entry.runId);

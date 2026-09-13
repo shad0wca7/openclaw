@@ -1026,7 +1026,14 @@ describe("subagent announce formatting", () => {
       },
     };
     chatHistoryMock.mockResolvedValueOnce({
-      messages: [{ role: "assistant", content: [{ type: "text", text: "final answer: 2" }] }],
+      messages: [
+        {
+          role: "assistant",
+          stopReason: "stop",
+          __openclaw: { runId: "run-direct-completion", runTerminal: true },
+          content: [{ type: "text", text: "final answer: 2" }],
+        },
+      ],
     });
     readLatestAssistantReplyMock.mockResolvedValue("");
 
@@ -1162,6 +1169,34 @@ describe("subagent announce formatting", () => {
     expect(sendSpy).not.toHaveBeenCalled();
     expect(agentSpy).not.toHaveBeenCalled();
     expect(sessionsDeleteSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports missing run-linked evidence instead of announcing a foreign final", async () => {
+    chatHistoryMock.mockResolvedValue({
+      messages: [
+        {
+          role: "assistant",
+          stopReason: "stop",
+          content: "Foreign final",
+          __openclaw: { runId: "other-run", runTerminal: true },
+        },
+      ],
+    });
+    await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:test",
+      childRunId: "expected-run",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      requesterOrigin: { channel: "slack", to: "channel:C123", accountId: "acct-1" },
+      ...defaultOutcomeAnnounce,
+      expectsCompletionMessage: true,
+    });
+    expect(getAgentCall()?.params?.internalEvents?.[0]).toMatchObject({
+      result: "Execution completed, but run-linked final reply evidence is unavailable.",
+      status: "ok",
+      noVisibleResult: true,
+    });
+    expect(getAgentCall()?.params?.message).not.toContain("Foreign final");
   });
 
   it("hands required NO_REPLY completion to the parent as missing output", async () => {
@@ -1366,7 +1401,14 @@ describe("subagent announce formatting", () => {
       },
     };
     chatHistoryMock.mockResolvedValueOnce({
-      messages: [{ role: "assistant", content: [{ type: "text", text: "final answer: 2" }] }],
+      messages: [
+        {
+          role: "assistant",
+          stopReason: "stop",
+          __openclaw: { runId: "run-direct-completion", runTerminal: true },
+          content: [{ type: "text", text: "final answer: 2" }],
+        },
+      ],
     });
     subagentRegistryMock.countActiveDescendantRuns.mockImplementation((sessionKey: string) =>
       sessionKey === "agent:main:main" ? 1 : 0,
@@ -2364,7 +2406,11 @@ describe("subagent announce formatting", () => {
           role: "toolResult",
           content: [{ type: "text", text: "old tool output" }],
         },
-        textAssistant("assistant completion text"),
+        {
+          ...textAssistant("assistant completion text"),
+          stopReason: "stop",
+          __openclaw: { runId: "run-completion-assistant-output", runTerminal: true },
+        },
       ],
     });
     readLatestAssistantReplyMock.mockResolvedValue("");
@@ -2415,7 +2461,9 @@ describe("subagent announce formatting", () => {
     expect(agentSpy).toHaveBeenCalledTimes(1);
     const call = getAgentCall() as { params?: { message?: string } };
     const msg = call?.params?.message as string;
-    expect(msg).toContain("(no output)");
+    expect(msg).toContain(
+      "Execution completed, but run-linked final reply evidence is unavailable.",
+    );
     expect(msg).not.toContain("tool output only");
   });
 
@@ -2445,7 +2493,9 @@ describe("subagent announce formatting", () => {
     expect(agentSpy).toHaveBeenCalledTimes(1);
     const call = getAgentCall() as { params?: { message?: string } };
     const msg = call?.params?.message as string;
-    expect(msg).toContain("(no output)");
+    expect(msg).toContain(
+      "Execution completed, but run-linked final reply evidence is unavailable.",
+    );
     expect(msg).not.toContain("user prompt should not be announced");
   });
 

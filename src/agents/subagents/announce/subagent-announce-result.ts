@@ -9,7 +9,10 @@ import {
 import type { AgentRunSessionTarget } from "../../run-session-target.types.js";
 import { wrapPromptDataBlock } from "../../sanitize-for-prompt.js";
 import { extractStoredAssistantText } from "../../tools/chat-history-text.js";
-import { resolveSubagentCompletionResultText } from "../completion/subagent-completion-result.js";
+import {
+  SUBAGENT_COMPLETION_EVIDENCE_UNAVAILABLE,
+  resolveSubagentCompletionResultText,
+} from "../completion/subagent-completion-result.js";
 import {
   SUBAGENT_ENDED_REASON_KILLED,
   type SubagentLifecycleEndedReason,
@@ -228,7 +231,14 @@ export function buildChildCompletionFindings(
           truncationMarker: "…",
         }),
         `status: ${truncateChildCompletionField(outcome)}`,
-        formatChildResultData(resultText),
+        formatChildResultData(
+          resultText ??
+            (child.completion?.required &&
+            child.execution.outcome?.status === "ok" &&
+            !child.completion.terminalReply
+              ? SUBAGENT_COMPLETION_EVIDENCE_UNAVAILABLE
+              : undefined),
+        ),
       ].join("\n"),
     );
   }
