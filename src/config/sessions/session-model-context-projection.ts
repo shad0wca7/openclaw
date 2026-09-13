@@ -117,7 +117,10 @@ export function projectTranscriptNavigationSql(event: Expression<string>): RawBu
 
 /** Reset boundaries select ancestry and replay roles without loading message bodies. */
 export function projectResetBoundaryNavigationSql(event: Expression<string>): RawBuilder<string> {
-  const entry = pickJsonObject(event, [
+  // Only the guarded object branch below evaluates JSONB. Keep opaque/invalid
+  // rows on the original JSON.parse path and durable event bytes unchanged.
+  const navigationEvent = /* kysely-allow-raw: query-local JSONB avoids serializing opaque transcript bodies. */ sql<Uint8Array>`jsonb(${event})`;
+  const entry = pickJsonObject(navigationEvent, [
     ...TRANSCRIPT_NAVIGATION_KEYS,
     "timestamp",
     "firstKeptEntryId",
@@ -128,7 +131,7 @@ export function projectResetBoundaryNavigationSql(event: Expression<string>): Ra
   // must reach JSON.parse unchanged instead of failing inside the metadata projection.
   return /* kysely-allow-raw: reset planning uses navigation metadata, never durable transcript payloads. */ sql<string>`CASE WHEN json_valid(${event}) THEN
     CASE WHEN json_type(${event}) = 'object' THEN
-      json_set(${entry}, '$.message', json_object('role', json_extract(${event}, '$.message.role')))
+      json_set(${entry}, '$.message', json_object('role', json_extract(${navigationEvent}, '$.message.role')))
     ELSE ${event} END
     ELSE ${event} END`;
 }
