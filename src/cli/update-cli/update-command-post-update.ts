@@ -19,6 +19,7 @@ import { parkForegroundUpdateForActivation } from "./update-command-handoff.js";
 import { appendPluginUpdateWarnings } from "./update-command-plugins-internals.js";
 import {
   completePostUpdateMaintenance,
+  parkManagedServiceForPostUpdate,
   resumePostUpdateWindowsAutoStart,
 } from "./update-command-post-update-maintenance.js";
 import { UpdateCommandRecoveryPendingError } from "./update-command-recovery-error.js";
@@ -421,10 +422,34 @@ export async function finishUpdate(
     }
 
     const postUpdateRoot = params.result.root ?? params.root;
-    const convergePlugins = async (beforeDoctor?: () => Promise<void>) => {
+    // A managed service can respawn while the candidate was validated; reprove
+    // custody (inspect, then prepare) instead of assuming the recorded stop holds.
+    const parkForMaintenance = async () => {
+      const before = currentServiceStop();
+      if (!before) {
+        throw new Error("Plugin maintenance lost its update service owner.");
+      }
+      rollbackStopState = await parkManagedServiceForPostUpdate({
+        before,
+        updateRun: params.opts.run,
+        updateInstallKind: params.result.mode === "git" ? "git" : "package",
+        root: postUpdateRoot,
+        jsonMode: Boolean(params.opts.json),
+        timeoutMs: params.updateStepTimeoutMs,
+        onStopped: (state) => {
+          rollbackStopState = state;
+          pendingRestartAtMs ??= state.stoppedAtMs;
+        },
+      });
+      pendingRestartAtMs ??= rollbackStopState.stoppedAtMs;
+    };
+    const convergePlugins = async () => {
       const pluginParams = {
         ...params,
-        beforeDoctor: beforeDoctor ?? parkForegroundOrigin,
+        beforeDoctor:
+          shouldRestart && params.preManagedServiceStop?.serviceUpdateVerdict?.kind === "owned"
+            ? parkForMaintenance
+            : parkForegroundOrigin,
         beforeRuntimePublication: parkForegroundOrigin,
         assertCurrent,
         candidateRuntime,
@@ -442,7 +467,7 @@ export async function finishUpdate(
       return convergence;
     };
     // A current core may converge plugins online, parking before fresh Doctor.
-    // A replaced core keeps convergence in its original stopped interval.
+    // A replaced core revalidates that interval before entering its fresh runtime.
     const deferPluginConvergence =
       shouldRestart &&
       params.coreAlreadyCurrent === true &&
@@ -467,7 +492,12 @@ export async function finishUpdate(
     let restartContext: Awaited<ReturnType<typeof prepareUpdateRestart>>;
     try {
       restartContext = await prepareUpdateRestart(
-        { ...params, shouldRestart, result: resultWithPostUpdate },
+        {
+          ...params,
+          shouldRestart,
+          result: resultWithPostUpdate,
+          preManagedServiceStop: currentServiceStop(),
+        },
         restartConfigSnapshot,
       );
     } catch (error) {
@@ -559,38 +589,7 @@ export async function finishUpdate(
       await restart();
     }
     if (deferPluginConvergence) {
-      ({ resultWithPostUpdate, postUpdateConfigSnapshot } = await convergePlugins(async () => {
-        const before = currentServiceStop();
-        if (!before) {
-          throw new Error("Plugin maintenance lost its update service owner.");
-        }
-        await before.windowsTaskAutoStartRecovery?.complete(true);
-        // Package work finished online. Full Doctor owns state migrations, so
-        // park only now and retain this suspension through verified activation.
-        const stopped = await maybeStopManagedServiceBeforeMutableUpdate({
-          updateRun: params.opts.run,
-          updateInstallKind: resultWithPostUpdate.mode === "git" ? "git" : "package",
-          root: postUpdateRoot,
-          shouldRestart: true,
-          jsonMode: Boolean(params.opts.json),
-          expectedService: before,
-          phase: "prepare",
-          timeoutMs: params.updateStepTimeoutMs,
-          onStopped: (state) => {
-            rollbackStopState = state;
-            pendingRestartAtMs ??= state.stoppedAtMs;
-          },
-        });
-        rollbackStopState = stopped;
-        before.windowsTaskAutoStartRecovery = stopped.windowsTaskAutoStartRecovery;
-        if (stopped.blockMessage || !stopped.stopped) {
-          throw new Error(
-            stopped.blockMessage ?? "Gateway could not be parked for plugin maintenance.",
-          );
-        }
-        stopped.windowsTaskAutoStartRecovery?.beginMutation();
-        pendingRestartAtMs ??= stopped.stoppedAtMs;
-      }));
+      ({ resultWithPostUpdate, postUpdateConfigSnapshot } = await convergePlugins());
       const requiresInstallRootRefresh =
         restartContext.serviceUpdateVerdict?.kind === "owned" &&
         restartContext.serviceUpdateVerdict.requiresInstallRootRefresh;
