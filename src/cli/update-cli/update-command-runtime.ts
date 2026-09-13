@@ -85,6 +85,8 @@ export async function completeSourceUpdateRuntime(params: {
     try {
       params.lease.assertOwned();
       if (prepared.changed) {
+        // Only changed outputs need the caller's managed-service maintenance interval.
+        // Publication still independently proves physical offline authority below.
         await params.beforePublication?.();
         params.lease.assertOwned();
         await withGatewayRuntimeArtifactPublication(

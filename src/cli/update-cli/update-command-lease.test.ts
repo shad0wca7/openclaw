@@ -476,6 +476,92 @@ describe("update orchestration lifecycle ownership", () => {
     },
   );
 
+  it("parks a current core before changed runtime publication and keeps an exact retry online", async () => {
+    await writeScenario("current-process", { runtimeRoot: state.root });
+    const { runtimeEntry } = await prepareIncompleteSourceRuntime();
+    let running = true;
+    const order: string[] = [];
+    const beforeDoctor = vi.fn(async () => {
+      expect(running).toBe(true);
+      running = false;
+      order.push("stop");
+    });
+    mocks.publication.mockImplementation(async (params, publish) => {
+      expect(running).toBe(false);
+      order.push("publication");
+      return publish(async () => params.assertCurrent());
+    });
+    mocks.plugins.mockImplementation(async () => {
+      order.push("plugins");
+      return { ...pluginResult, changed: false };
+    });
+    const params = {
+      coreAlreadyCurrent: true,
+      result: {
+        status: "skipped" as const,
+        reason: "already-current",
+        mode: "git" as const,
+        root: state.root,
+        before: { version: VERSION },
+        after: { version: VERSION },
+        steps: [],
+        durationMs: 1,
+      },
+      root: state.root,
+      installKindChanged: false,
+      configSnapshot: await readConfigFileSnapshot({ skipPluginValidation: true }),
+      requestedChannel: null,
+      storedChannel: "stable" as const,
+      channel: "stable" as const,
+      downgradeRisk: false,
+      opts: { json: true, yes: true },
+      preUpdatePluginInstallRecords: {},
+      startedAt: Date.now(),
+      updateStepTimeoutMs: 15_000,
+      beforeDoctor,
+    };
+    const completed = await convergeUpdatePlugins(params);
+    expect(completed.resultWithPostUpdate).toMatchObject({
+      status: "ok",
+      postUpdate: { plugins: { changed: true } },
+    });
+    expect(order).toEqual(["stop", "publication", "plugins"]);
+    expect(beforeDoctor).toHaveBeenCalledOnce();
+    expect(await events()).toContain("runtime-proof:doctor");
+    const original = await fs.stat(runtimeEntry);
+    const doctorCount = (await events()).filter((event) => event === "runtime-proof:doctor").length;
+
+    running = true;
+    beforeDoctor.mockClear();
+    order.length = 0;
+    const retry = await convergeUpdatePlugins(params);
+    expect(retry.resultWithPostUpdate).toMatchObject({
+      status: "skipped",
+      postUpdate: { plugins: { changed: false } },
+    });
+    expect(order).toEqual(["plugins"]);
+    expect(beforeDoctor).not.toHaveBeenCalled();
+    expect((await events()).filter((event) => event === "runtime-proof:doctor")).toHaveLength(
+      doctorCount,
+    );
+    expect(await fs.stat(runtimeEntry)).toMatchObject({
+      ino: original.ino,
+      mtimeMs: original.mtimeMs,
+    });
+  });
+
+  it("reports repaired source artifacts to a published parent even when plugin packages are unchanged", async () => {
+    await writeScenario("resume", { runtimeRoot: state.root });
+    await prepareIncompleteSourceRuntime();
+    mocks.plugins.mockResolvedValue({ ...pluginResult, changed: false });
+    await invoke("resume");
+    expect(defaultRuntime.writeJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        postUpdate: { plugins: expect.objectContaining({ changed: true }) },
+      }),
+    );
+  });
+
   it.each(["resume", "repair"] as const)(
     "%s completes missing source artifacts before consumers and leaves an exact online retry untouched",
     async (lane) => {

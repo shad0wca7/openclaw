@@ -249,6 +249,11 @@ export async function convergeUpdatePlugins(params: {
         postCorePluginUpdate = phase.pluginUpdate;
         postUpdateConfigSnapshot = phase.configSnapshot;
       }
+      // Changed dist runtime output must also be Doctor-verified before restart,
+      // even when plugin state itself did not change.
+      if (runtime.changed && postCorePluginUpdate && !postCorePluginUpdate.changed) {
+        postCorePluginUpdate = { ...postCorePluginUpdate, changed: true };
+      }
       assertCurrent?.();
 
       if (
