@@ -243,6 +243,20 @@ they do not change message-execution profile rotation or session pins.
 - Probe targets can come from auth profiles, environment credentials, or `models.json` (result `source`: `profile`, `env`, `models.json`).
 - If a provider has credentials but OpenClaw cannot resolve a probeable model candidate for it, `models status --probe` reports `status: no_model` with `reasonCode: no_model`.
 
+## Native CLI authentication selection
+
+Claude CLI selects saved subscription token and OAuth credentials through the
+configured account order. Existing sessions retain their bound account or native
+login. Automatic selection excludes API-key profiles, including profiles stored
+under the CLI provider, so a malformed saved profile cannot displace native login.
+Explicit compatible saved-profile selections are still forwarded, and missing
+or incompatible explicit selections fail instead of switching accounts.
+
+Claude CLI rejects OAuth/setup-token material in a selected `api_key` credential
+before launching. Save such credentials using token authentication, or remove the
+obsolete saved profile and use native Claude login. Repeating native login does
+not repair a separately stored, misclassified credential.
+
 ## External CLI credential discovery
 
 - Supported external CLI credentials are discovered only when the provider, runtime, or auth profile is in scope for the current operation, or when a stored local profile for that external source already exists.

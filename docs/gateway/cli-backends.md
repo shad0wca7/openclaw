@@ -249,8 +249,8 @@ openclaw models auth paste-token --provider anthropic
 New sessions select saved subscription credentials through the configured account
 order and forward them to the CLI through a protected file descriptor. Existing
 sessions keep their account until you select another or remove its saved profile.
-Explicit account selections and empty account orders remain authoritative. API keys saved
-for the `anthropic` provider require an explicit selection; they do not replace
+Explicit account selections and empty account orders remain authoritative. Saved API keys,
+including profiles under the Claude CLI provider, require an explicit selection; they do not replace
 native subscription login automatically.
 
 Docker installs need Claude Code and the chosen credentials inside the persisted container home, not only on the host. See [Claude CLI backend in Docker](/install/docker#claude-cli-backend-in-docker).

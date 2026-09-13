@@ -8,6 +8,7 @@ import type {
   CliBackendPlugin,
   CliBackendPreparedExecution,
 } from "openclaw/plugin-sdk/cli-backend";
+import { isAnthropicOAuthApiKey } from "openclaw/plugin-sdk/provider-stream-shared";
 import { parseClaudeCliJsonlEvent, parseClaudeCliJsonlLifecycleEvent } from "./cli-output.js";
 import {
   CLAUDE_CLI_BACKEND_ID,
@@ -140,6 +141,11 @@ function resolveClaudeCliAuthInput(
     });
   }
   if (credential?.type === "api_key" && "key" in credential && typeof credential.key === "string") {
+    if (isAnthropicOAuthApiKey(credential.key)) {
+      throw new Error(
+        "Selected Claude CLI API-key profile contains OAuth or setup-token material. Re-authenticate it with token auth or select native Claude login. OpenClaw did not start the run.",
+      );
+    }
     return createClaudeCliAuthInput({
       envName: "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
       value: credential.key,

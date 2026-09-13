@@ -858,7 +858,7 @@ describe("normalizeClaudeBackendConfig", () => {
       authCredential: {
         type: "oauth",
         provider: "claude-cli",
-        access: "selected-access-token",
+        access: "sk-ant-oat01-selected-access-token",
         refresh: "selected-refresh-token",
         expires: Date.now() + 60_000,
       },
@@ -880,8 +880,10 @@ describe("normalizeClaudeBackendConfig", () => {
     expect(prepared.env).not.toHaveProperty("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB");
     expect(prepared.clearEnv).toEqual([...CLAUDE_CLI_CLEAR_ENV]);
     expect(prepared.secretInput.fd).toBe(3);
-    expect(prepared.secretInput.fingerprint).not.toContain("selected-access-token");
-    expect(prepared.secretInput.createData().toString("utf8")).toBe("selected-access-token");
+    expect(prepared.secretInput.fingerprint).not.toContain("sk-ant-oat01-selected-access-token");
+    expect(prepared.secretInput.createData().toString("utf8")).toBe(
+      "sk-ant-oat01-selected-access-token",
+    );
 
     const sameToken = backend.prepareExecution?.({
       workspaceDir: "/tmp/openclaw-claude-cli",
@@ -890,7 +892,7 @@ describe("normalizeClaudeBackendConfig", () => {
       authCredential: {
         type: "token",
         provider: "claude-cli",
-        token: "selected-access-token",
+        token: "sk-ant-oat01-selected-access-token",
       },
     } as Parameters<NonNullable<typeof backend.prepareExecution>>[0] & {
       authCredential: { type: "token"; provider: string; token: string };
@@ -961,6 +963,22 @@ describe("normalizeClaudeBackendConfig", () => {
     expect(prepared).not.toHaveProperty("env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR");
     expect(prepared).not.toHaveProperty("env.CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR");
   });
+
+  it.each(["sk-ant-oat01-synthetic-token", "  sk-ant-oat01-synthetic-token  "])(
+    "rejects OAuth material mislabeled as an API key before launch (%s)",
+    (key) => {
+      const backend = buildAnthropicCliBackend();
+      expect(() =>
+        backend.prepareExecution?.({
+          workspaceDir: "/tmp/openclaw-claude-cli",
+          provider: "claude-cli",
+          modelId: "claude-opus-4-7",
+          authProfileId: "claude-cli:default",
+          authCredential: { type: "api_key", provider: "claude-cli", key },
+        }),
+      ).toThrow("Selected Claude CLI API-key profile contains OAuth or setup-token material");
+    },
+  );
 
   it("forwards a selected API-key profile through Claude's private descriptor", async () => {
     const backend = buildAnthropicCliBackend();
