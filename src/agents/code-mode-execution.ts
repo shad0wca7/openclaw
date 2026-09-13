@@ -580,7 +580,12 @@ export async function runWait(params: {
   }
   const state = activeRuns.get(params.runId);
   if (!state) {
-    throw new ToolInputError("code mode run is unavailable or expired.");
+    // wait resumes suspended code mode runs only. Ids minted by a nested tool
+    // (a backgrounded shell session, for example) never match, so say what the
+    // id space is instead of dead-ending the model on a bare expiry message.
+    throw new ToolInputError(
+      "code mode run is unavailable or expired. wait only resumes a run id returned by a suspended code mode run; an id returned inside a nested tool result must be continued using that tool's polling or continuation API.",
+    );
   }
   if (state.ctx.runId && state.ctx.runId !== params.ctx.runId) {
     throw new ToolInputError("code mode run belongs to a different agent run.");
