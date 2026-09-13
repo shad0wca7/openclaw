@@ -1,6 +1,8 @@
 import type { WhatsAppIngressLifecycle } from "./durable-receive.js";
 
-const ingressLifecycleKey = Symbol("whatsappIngressLifecycle");
+// The WhatsApp plugin can be evaluated more than once by runtime/JIT module
+// boundaries. Keep lifecycle metadata visible across those module instances.
+const ingressLifecycleKey = Symbol.for("openclaw.whatsappIngressLifecycle");
 
 type WhatsAppIngressLifecycleCarrier = {
   [ingressLifecycleKey]?: WhatsAppIngressLifecycle;
