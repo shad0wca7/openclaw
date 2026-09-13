@@ -115,6 +115,7 @@ type PackageFixtureDependencies = {
   sqliteHostPlatform: NodeJS.Platform;
   mockGatewayHealth: (version: string, connId: string, buildId?: string) => void;
   mockPackageInstallStatus: (root: string) => void;
+  windowsTaskStopped?: Mock;
 };
 
 /** Package bytes, command transport and service lifecycle used by the CLI scenarios. */
@@ -129,6 +130,7 @@ export function createUpdateCliPackageFixtures({
   sqliteHostPlatform,
   mockGatewayHealth,
   mockPackageInstallStatus,
+  windowsTaskStopped,
 }: PackageFixtureDependencies) {
   const mockNpmGlobalCommands = (
     nodeModules: string,
@@ -242,6 +244,7 @@ export function createUpdateCliPackageFixtures({
   const mockPackageGatewayLifecycle = () => {
     serviceStop.mockImplementation(async () => {
       serviceReadRuntime.mockResolvedValue({ status: "stopped", state: "stopped" });
+      windowsTaskStopped?.mockReturnValue(process.platform === "win32");
       // macOS stop boots out the job; systemd enablement and task registration remain.
       if (process.platform === "darwin") {
         serviceLoaded.mockResolvedValue(false);
@@ -259,6 +262,7 @@ export function createUpdateCliPackageFixtures({
         await fs.readFile(path.join(path.dirname(entrypoint), "..", "package.json"), "utf8"),
       ) as { version: string };
       serviceLoaded.mockResolvedValue(true);
+      windowsTaskStopped?.mockReturnValue(false);
       serviceReadRuntime.mockResolvedValue({
         status: "running",
         pid: gatewayFixturePid,
