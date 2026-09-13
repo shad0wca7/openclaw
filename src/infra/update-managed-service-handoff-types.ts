@@ -29,6 +29,7 @@ export type ManagedServiceUpdateHandoffParams = {
   foregroundOrigin?: ForegroundUpdateOrigin;
   env?: NodeJS.ProcessEnv;
   devTarget?: DevUpdateTarget;
+  devBranch?: string;
   execPath?: string;
   argv1?: string;
   parentPid?: number;

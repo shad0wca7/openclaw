@@ -39,7 +39,11 @@ import {
   UPDATE_RUN_ID_ENV,
   type ControlPlaneUpdateSentinelMetaFile,
 } from "./update-control-plane-sentinel.js";
-import { applyDevUpdateTargetEnv } from "./update-dev-target.js";
+import {
+  applyDevUpdateTargetEnv,
+  UPDATE_DEV_BRANCH_ENV,
+  type DevUpdateTarget,
+} from "./update-dev-target.js";
 import { resolvePnpmGlobalInstallOwner, verifyPackageUpdateRecovery } from "./update-global.js";
 import { resolveUpdateInstallRoot } from "./update-install-root.js";
 import { MANAGED_SERVICE_UPDATE_HANDOFF_TEMP_PREFIX } from "./update-managed-service-handoff-cleanup.js";
@@ -1582,7 +1586,13 @@ async function spawnManagedServiceUpdateHandoff(
     commandArgv[0] = startup.command;
   }
   const readyEnv = startup?.env ?? preparedEnv;
-  const env = params.devTarget ? applyDevUpdateTargetEnv(readyEnv, params.devTarget) : readyEnv;
+  const selectedEnv =
+    params.devBranch === undefined
+      ? readyEnv
+      : { ...readyEnv, [UPDATE_DEV_BRANCH_ENV]: params.devBranch };
+  const env = params.devTarget
+    ? applyDevUpdateTargetEnv(selectedEnv, params.devTarget)
+    : selectedEnv;
 
   const helperParams = {
     runId: metaFile.meta.runId,

@@ -151,6 +151,7 @@ type GitUpdateTarget = {
 export type UpdateRunnerOptions = {
   channel?: UpdateChannel;
   devTarget?: DevUpdateTarget;
+  devBranch?: string;
   /** Expose a new checkout only after target admission; subsequent work uses the published path. */
   publishGitCheckout?: () => Promise<string>;
   /** Owns preflight artifact storage when publication moves a newly cloned checkout. */

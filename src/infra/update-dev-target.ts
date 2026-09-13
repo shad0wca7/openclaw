@@ -2,6 +2,57 @@ import { safeParseJson, stableStringify } from "@openclaw/normalization-core";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 
 export const UPDATE_DEV_TARGET_REF_ENV = "OPENCLAW_UPDATE_DEV_TARGET_REF";
+export const UPDATE_DEV_BRANCH_ENV = "OPENCLAW_UPDATE_DEV_BRANCH";
+
+/** An explicit branch must be a literal local branch, never a revision expression. */
+export function isValidDevUpdateBranch(branch: string): boolean {
+  return (
+    branch.length > 0 &&
+    branch !== "HEAD" &&
+    branch !== "@" &&
+    !branch.startsWith("-") &&
+    !branch.startsWith("refs/") &&
+    !/[\s~^:?*[\]\\]/u.test(branch) &&
+    Array.from(branch).every((char) => char.charCodeAt(0) >= 0x20 && char.charCodeAt(0) !== 0x7f) &&
+    !branch.includes("..") &&
+    !branch.includes("@{") &&
+    !branch.endsWith(".") &&
+    branch
+      .split("/")
+      .every((part) => part.length > 0 && !part.startsWith(".") && !part.endsWith(".lock"))
+  );
+}
+
+export function isDevUpdateBranchSelectionValid(
+  selection: { devBranch?: string; devTarget?: DevUpdateTarget },
+  channel: string,
+  currentBranch: string | null,
+): boolean {
+  return (
+    selection.devBranch === undefined ||
+    (channel === "dev" &&
+      !selection.devTarget &&
+      isValidDevUpdateBranch(selection.devBranch) &&
+      currentBranch === selection.devBranch)
+  );
+}
+
+export function readDevUpdateBranch(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const branch = env[UPDATE_DEV_BRANCH_ENV];
+  if (branch === undefined) {
+    return undefined;
+  }
+  if (!isValidDevUpdateBranch(branch)) {
+    throw new Error(`Invalid ${UPDATE_DEV_BRANCH_ENV}; expected a literal local Git branch name.`);
+  }
+  if (env[UPDATE_DEV_TARGET_REF_ENV]?.trim()) {
+    throw new Error(
+      `${UPDATE_DEV_BRANCH_ENV} cannot be combined with ${UPDATE_DEV_TARGET_REF_ENV}.`,
+    );
+  }
+  return branch;
+}
+
 const TRACKED_DEV_TARGET_PREFIX = "openclaw-dev-target:v1:";
 const MAX_TRACKED_DEV_TARGET_PAYLOAD_LENGTH = 4096;
 

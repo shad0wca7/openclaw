@@ -6210,6 +6210,31 @@ describe("update-cli", () => {
     );
   });
 
+  it.each([true, false])(
+    "carries explicit dev branch from CLI environment to its owner (preview: %s)",
+    async (dryRun) => {
+      mockOwnedGitService();
+      await withEnvAsync(
+        { OPENCLAW_UPDATE_DEV_BRANCH: "integrate/live", OPENCLAW_UPDATE_DEV_TARGET_REF: undefined },
+        async () => {
+          await invokeUpdateCli({ channel: "dev", dryRun, yes: true, json: true, restart: false });
+        },
+      );
+      if (dryRun) {
+        expect(lastWriteJsonCall()).toMatchObject({
+          dryRun: true,
+          effectiveChannel: "dev",
+          devBranch: "integrate/live",
+        });
+        expect(runGatewayUpdate).not.toHaveBeenCalled();
+      } else {
+        expect(runGatewayUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({ channel: "dev", devBranch: "integrate/live" }),
+        );
+      }
+    },
+  );
+
   it.each([
     {
       name: "defaults to dev channel for git installs when unset",

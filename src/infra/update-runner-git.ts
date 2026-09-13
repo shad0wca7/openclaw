@@ -2,6 +2,7 @@ import { hasCommandProcessCleanupError } from "../process/exec-result.js";
 import { resolveControlUiAssetHealth } from "./control-ui-assets.js";
 import { readPackageVersion } from "./package-json.js";
 import { DEV_BRANCH, type UpdateChannel } from "./update-channels.js";
+import { isDevUpdateBranchSelectionValid } from "./update-dev-target.js";
 import { getUpdateDoctorConfigFailureReason } from "./update-doctor-config.js";
 import { createUpdateErrorFact } from "./update-failure-facts.js";
 import { readBuiltGatewayBuildId, verifyGitUpdateRecovery } from "./update-git-runtime.js";
@@ -75,9 +76,9 @@ export async function updateGitCheckout(params: {
     ...(beforeBuildId ? { buildId: beforeBuildId } : {}),
   };
   const branch = await readBranchName(runCommand, gitRoot, timeoutMs);
+  const devBranch = opts.devBranch ?? DEV_BRANCH;
   const devTarget = channel === "dev" ? opts.devTarget : undefined;
-  const hasDevTarget = devTarget !== undefined;
-  const needsCheckoutMain = channel === "dev" && !hasDevTarget && branch !== DEV_BRANCH;
+  const needsCheckoutMain = channel === "dev" && !devTarget && branch !== devBranch;
   const totalSteps = channel === "dev" ? (needsCheckoutMain ? 12 : 11) : 9;
   const steps: UpdateStepResult[] = [];
   const { step, workStep, forRunner, recoveryStep } = createGitUpdateSteps({
@@ -136,6 +137,9 @@ export async function updateGitCheckout(params: {
     steps,
     durationMs: Date.now() - startedAt,
   });
+  if (!isDevUpdateBranchSelectionValid(opts, channel, branch)) {
+    return buildError("invalid-dev-branch");
+  }
   const appendRecoveryStep = async (name: string, argv: string[]) => {
     const result = await runStep(recoveryStep(name, argv, gitRoot));
     return !isFailedUpdateStep(result);
@@ -214,7 +218,7 @@ export async function updateGitCheckout(params: {
             gitRoot,
             "branch",
             "-D",
-            DEV_BRANCH,
+            devBranch,
           ]);
         }
       }
@@ -237,7 +241,7 @@ export async function updateGitCheckout(params: {
         gitRoot,
         "branch",
         "-D",
-        DEV_BRANCH,
+        devBranch,
       ]);
     }
     const verified = await verifyRollbackHead();
@@ -495,12 +499,12 @@ export async function updateGitCheckout(params: {
       return buildError(sourceChanged.reason, sourceChanged.status);
     }
     await prepareMutation(preflight.candidateSha);
-    const activateBranch = channel === "dev" && !hasDevTarget;
+    const activateBranch = channel === "dev" && !devTarget;
     sourceMutationStarted = true;
     const failure = await runRequiredStep(
       "git-checkout",
       activateBranch
-        ? ["git", "-C", gitRoot, "checkout", "-B", DEV_BRANCH, preflight.candidateSha]
+        ? ["git", "-C", gitRoot, "checkout", "-B", devBranch, preflight.candidateSha]
         : ["git", "-C", gitRoot, "checkout", "--detach", preflight.candidateSha],
       "checkout-failed",
     );
@@ -516,7 +520,7 @@ export async function updateGitCheckout(params: {
         "branch",
         "--set-upstream-to",
         preflight.selectedDevUpstream,
-        DEV_BRANCH,
+        devBranch,
       ];
       const upstreamOptions = workStep("git-set-upstream", upstreamArgs, gitRoot);
       const upstreamStep = await runGitUpstreamStep(upstreamOptions);

@@ -739,6 +739,24 @@ the sentinel.
 - `extended-stable`: unsupported for Git checkouts; no checkout mutation
   occurs.
 
+For a Git checkout that maintains local patches on an integration branch, set
+`OPENCLAW_UPDATE_DEV_BRANCH` to the literal name of the currently checked-out
+branch when running a dev update:
+
+```bash
+OPENCLAW_UPDATE_DEV_BRANCH=integrate/live openclaw update --channel dev --dry-run --json
+OPENCLAW_UPDATE_DEV_BRANCH=integrate/live openclaw update --channel dev
+```
+
+The branch must already exist, be checked out, and have an upstream. The updater
+rebases its local commits onto that upstream in the candidate, then preserves the
+branch during activation and rollback. Without this explicit selection, dev
+updates continue to use `main`. This setting is only valid for Git/dev updates
+and cannot be combined with `OPENCLAW_UPDATE_DEV_TARGET_REF`. The JSON dry-run
+preview includes `devBranch` when the executing updater supports and recognizes
+the selection; older drivers ignore this environment variable, so upgrade them
+before relying on it.
+
 ### Update steps
 
 <Steps>

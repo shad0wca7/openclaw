@@ -244,6 +244,7 @@ export async function executeMutableUpdate(
               mode,
               timeoutMs: updateStepTimeoutMs,
               devTarget: params.devTarget,
+              devBranch: params.devBranch,
               nodeRunner: params.packageUpdateNodeRunner,
               invocationCwd: params.invocationCwd,
               stopProgress: params.stop,
@@ -580,6 +581,7 @@ export async function executeMutableUpdate(
         progress: params.progress,
         channel: params.channel,
         devTarget: params.devTarget,
+        devBranch: params.devBranch,
         assertCurrent: assertExecutionCurrent,
         inspectGitTarget: async (target, installTarget) => {
           retentionInstallTarget = installTarget;

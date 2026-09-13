@@ -140,6 +140,91 @@ export async function expectCancelledGitCandidateCleanup({
   expect(await runRealGit(localRoot, "rev-parse", "HEAD")).toBe(baseSha);
 }
 
+/** Branch cases share the candidate suite's real Git/runtime fixture. */
+export function registerGitDevBranchTests(context: {
+  root: string;
+  beforeSha: string;
+  git: (root: string, ...args: string[]) => Promise<string>;
+  update: (opts?: UpdateRunnerOptions) => Promise<UpdateRunResult>;
+  advanceRemote: () => Promise<string>;
+  expectRuntime: (root: string, sha: string) => Promise<void>;
+}) {
+  it.each([false, true])(
+    "rebases and activates an explicit integration branch (inspection: %s)",
+    async (inspection) => {
+      const mainSha = context.beforeSha;
+      await context.git(context.root, "checkout", "-b", "integrate/live");
+      await context.git(context.root, "branch", "--set-upstream-to=origin/main");
+      await fs.writeFile(path.join(context.root, "local-patch.txt"), "required local patch\n");
+      await context.git(context.root, "add", ".");
+      await context.git(context.root, "commit", "-m", "local patch");
+      context.beforeSha = await context.git(context.root, "rev-parse", "HEAD");
+      const upstreamSha = await context.advanceRemote();
+      const result = await context.update({
+        devBranch: "integrate/live",
+        ...(inspection ? { inspectGitTarget: async () => undefined } : {}),
+      });
+      expect(result.status, JSON.stringify(result)).toBe("ok");
+      expect(await context.git(context.root, "branch", "--show-current")).toBe("integrate/live");
+      expect(await context.git(context.root, "rev-parse", "main")).toBe(mainSha);
+      expect(await context.git(context.root, "rev-parse", "HEAD^")).toBe(upstreamSha);
+      expect(await fs.readFile(path.join(context.root, "local-patch.txt"), "utf8")).toBe(
+        "required local patch\n",
+      );
+      await context.expectRuntime(
+        context.root,
+        await context.git(context.root, "rev-parse", "HEAD"),
+      );
+    },
+  );
+
+  it("restores the explicit integration branch and runtime after activation failure", async () => {
+    await context.git(context.root, "checkout", "-b", "integrate/live");
+    await context.git(context.root, "branch", "--set-upstream-to=origin/main");
+    await context.advanceRemote();
+    const rename = fs.rename.bind(fs);
+    let injected = false;
+    vi.spyOn(fs, "rename").mockImplementation(async (source, destination) => {
+      if (
+        !injected &&
+        String(destination) === path.join(context.root, "dist") &&
+        String(source).includes(".openclaw-update-")
+      ) {
+        injected = true;
+        throw new Error("fixture activation failure");
+      }
+      return rename(source, destination);
+    });
+    const result = await context.update({ devBranch: "integrate/live" });
+    expect(injected).toBe(true);
+    expect(result).toMatchObject({ status: "error", reason: "runtime-verification-failed" });
+    expect(await context.git(context.root, "branch", "--show-current")).toBe("integrate/live");
+    expect(await context.git(context.root, "rev-parse", "HEAD")).toBe(context.beforeSha);
+    await context.expectRuntime(context.root, context.beforeSha);
+  });
+
+  it.each([
+    { devBranch: "missing-branch" },
+    { devBranch: "../invalid" },
+    { devBranch: "main", devTarget: { mode: "detached" as const, ref: "HEAD" } },
+  ])("refuses invalid or mismatched explicit branch admission: %j", async (selection) => {
+    await context.advanceRemote();
+    const result = await context.update(selection);
+    expect(result.status).toBe("error");
+    expect(result.steps).toEqual([]);
+    expect(await context.git(context.root, "branch", "--show-current")).toBe("main");
+  });
+}
+
+export async function expectNoRuntimeStagingPaths(root: string) {
+  const entries = await fs.readdir(root, { recursive: true });
+  expect(
+    entries.filter((entry) =>
+      /\.openclaw-update-[0-9a-f]{8}-[0-9a-f-]{27}\.tmp(?:\/|$)/u.test(entry),
+    ),
+  ).toEqual([]);
+}
+
 export const runtimeImports = [
   "../dist-runtime/identity.cjs",
   "../packages/runtime/dist-runtime/identity.cjs",

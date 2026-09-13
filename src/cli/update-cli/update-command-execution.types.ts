@@ -24,6 +24,7 @@ export type MutableUpdateExecutionParams = {
   opts: UpdateCommandOptions;
   shouldRestart: boolean;
   devTarget?: DevUpdateTarget;
+  devBranch?: string;
   packageInstallSpec: string | null;
   packageInstallEnv?: NodeJS.ProcessEnv;
   packageInstallTarget?: ResolvedGlobalInstallTarget;

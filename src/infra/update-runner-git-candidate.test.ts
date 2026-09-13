@@ -11,6 +11,7 @@ import { hasErrnoCode } from "./errno.js";
 import {
   expectRuntime,
   registerGitActivationDoctorOutcomeTests,
+  registerGitDevBranchTests,
   registerGitRuntimeStagingTests,
   runFixtureGit as git,
   resolveCandidateNodeRuntimeForTest,
@@ -197,6 +198,22 @@ describe("Git candidate activation", () => {
       ),
     ).toEqual([]);
   }
+
+  registerGitDevBranchTests({
+    get root() {
+      return root;
+    },
+    get beforeSha() {
+      return beforeSha;
+    },
+    set beforeSha(value) {
+      beforeSha = value;
+    },
+    git,
+    update,
+    advanceRemote,
+    expectRuntime,
+  });
 
   it.each([undefined, 5_000])(
     "separates work deadlines from observation budgets: %s",
@@ -405,7 +422,7 @@ describe("Git candidate activation", () => {
     expect(result.status, JSON.stringify(result)).toBe("ok");
     expect(events).toEqual(["build", "prepare exposure", "validate", "stop"]);
     await expectRuntime(root, beforeSha);
-    await expectNoRuntimeStagingPaths();
+    await expectNoRuntimeStagingPaths(root);
   });
 
   it("does not exempt stale staging paths during initial admission", async () => {
@@ -460,7 +477,7 @@ describe("Git candidate activation", () => {
       if (mutation !== "head") {
         expect(await git(root, "rev-parse", "HEAD")).toBe(beforeSha);
       }
-      await expectNoRuntimeStagingPaths();
+      await expectNoRuntimeStagingPaths(root);
     },
   );
 

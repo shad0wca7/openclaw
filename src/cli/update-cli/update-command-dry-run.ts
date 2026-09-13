@@ -56,6 +56,7 @@ type UpdateDryRunPreview = {
   requestedChannel: UpdateChannel | null;
   storedChannel: UpdateChannel | null;
   effectiveChannel: UpdateChannel;
+  devBranch?: string;
   tag: string;
   currentVersion: string | null;
   targetVersion: string | null;
@@ -119,6 +120,7 @@ export async function printUpdateDryRun(params: {
   requestedChannel: UpdateChannel | null;
   storedChannel: UpdateChannel | null;
   channel: UpdateChannel;
+  devBranch?: string;
   tag: string;
   packageInstallSpec: string | null;
   currentVersion: string | null;
@@ -213,6 +215,7 @@ export async function printUpdateDryRun(params: {
       requestedChannel: params.requestedChannel,
       storedChannel: params.storedChannel,
       effectiveChannel: params.channel,
+      ...(params.devBranch ? { devBranch: params.devBranch } : {}),
       tag: params.packageInstallSpec ?? params.tag,
       currentVersion: run?.before?.version ?? params.currentVersion,
       targetVersion: params.targetVersion,
