@@ -71,6 +71,8 @@ const buildOpenAICompatibleProviderCatalog = createLazyRuntimeMethod(
 );
 
 const PROVIDER_ID = "anthropic";
+const CLAUDE_SUBSCRIPTION_LIMIT_RE =
+  /^you['’]ve hit your (?:session |weekly )?limit(?:\.?$|\s+·\s+resets?\b)/iu;
 
 // Anthropic-native error descriptors stay with the Anthropic provider hook.
 function classifyAnthropicFailoverDescriptor(value: string | undefined) {
@@ -846,8 +848,15 @@ export function buildAnthropicProvider(): ProviderPlugin {
       (!isAnthropicMandatoryClaude5Model(modelId) ||
         normalizeLowercaseStringOrEmpty(provider) === PROVIDER_ID),
     resolveReasoningOutputMode: () => "native",
-    classifyFailoverReason: ({ code, errorType }) =>
-      classifyAnthropicFailoverDescriptor(errorType) ?? classifyAnthropicFailoverDescriptor(code),
+    classifyFailoverReason: ({ provider, code, errorType, errorMessage, status }) =>
+      classifyAnthropicFailoverDescriptor(errorType) ??
+      classifyAnthropicFailoverDescriptor(code) ??
+      ((provider === PROVIDER_ID || provider === CLAUDE_CLI_BACKEND_ID) &&
+      (status === undefined || status === 429) &&
+      errorMessage.length <= 500 &&
+      CLAUDE_SUBSCRIPTION_LIMIT_RE.test(errorMessage.trim())
+        ? "rate_limit"
+        : undefined),
     resolveThinkingProfile,
     wrapStreamFn: wrapAnthropicProviderStream,
     resolveFastModeSupport,

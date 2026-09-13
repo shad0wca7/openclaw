@@ -189,6 +189,50 @@ describe("anthropic provider replay hooks", () => {
     ).toBeUndefined();
   });
 
+  it.each([
+    "You've hit your session limit · resets 4:50am (America/Chicago)",
+    "You've hit your limit · resets 4:50am (America/Chicago)",
+    "You’ve hit your weekly limit · resets Sep 15, 4am (America/Chicago)",
+    "You've hit your session limit",
+  ])("classifies Claude subscription quota text: %s", async (errorMessage) => {
+    const provider = await registerSingleProviderPlugin(anthropicPlugin);
+    for (const providerId of ["anthropic", "claude-cli"]) {
+      expect(provider.classifyFailoverReason?.({ provider: providerId, errorMessage })).toBe(
+        "rate_limit",
+      );
+    }
+    expect(
+      provider.classifyFailoverReason?.({ provider: "custom-cli", errorMessage }),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    "Session limit exceeded while opening local sessions",
+    "Claude CLI stopped after reaching the maximum number of turns (limit: 5).",
+    "No conversation found with session ID: missing",
+    "Example: You've hit your session limit · resets 4:50am (America/Chicago)",
+    "You've hit your session limitation in the tool",
+  ])("does not confuse local session failures or quoted quota text: %s", async (errorMessage) => {
+    const provider = await registerSingleProviderPlugin(anthropicPlugin);
+    expect(
+      provider.classifyFailoverReason?.({ provider: "claude-cli", errorMessage }),
+    ).toBeUndefined();
+  });
+
+  it.each([401, 403, 500])(
+    "does not override HTTP %s with subscription quota text",
+    async (status) => {
+      const provider = await registerSingleProviderPlugin(anthropicPlugin);
+      expect(
+        provider.classifyFailoverReason?.({
+          provider: "claude-cli",
+          status,
+          errorMessage: "You've hit your session limit · resets 4:50am (America/Chicago)",
+        }),
+      ).toBeUndefined();
+    },
+  );
+
   it("owns replay policy for Claude transports", async () => {
     const provider = await registerSingleProviderPlugin(anthropicPlugin);
 

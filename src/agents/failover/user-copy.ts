@@ -21,6 +21,7 @@ import {
   isPeriodicUsageLimitErrorMessage,
   isProviderCompletedErrorFinishReasonMessage,
 } from "./message-patterns.js";
+import { renderRateLimitResetCopy } from "./quota-reset-copy.js";
 import {
   classifyProviderRequestFacets,
   type ProviderRequestFacet,
@@ -367,14 +368,23 @@ export function resolveProviderRequestFailureCopy(params: {
   facet: ProviderRequestFacet | null;
   status?: number;
   technicalMessage: string;
+  fallbackAttemptCount?: number;
 }) {
-  const code = resolveProviderRequestFailureCode(params);
+  const reason =
+    params.classification?.kind === "reason" ? params.classification.reason : undefined;
+  const resetCopy =
+    reason === "rate_limit" && (params.fallbackAttemptCount ?? 0) <= 1
+      ? renderRateLimitResetCopy(params.technicalMessage)
+      : undefined;
+  const code: ProviderRequestErrorCode | undefined = resetCopy
+    ? "provider_rate_limit_or_quota_error"
+    : resolveProviderRequestFailureCode(params);
   if (!code) {
     return undefined;
   }
   return {
     code,
-    userMessage: PROVIDER_REQUEST_COPY[code],
+    userMessage: resetCopy ?? PROVIDER_REQUEST_COPY[code],
     technicalMessage: params.technicalMessage,
   };
 }
@@ -436,6 +446,17 @@ export function renderRateLimitReplyCopy(params: {
   }
   if (attempts.some((attempt) => attempt.reason === "billing") || params.reason === "billing") {
     return BILLING_ERROR_USER_MESSAGE;
+  }
+  // Multiple attempts can have different reset windows; do not present one as universal.
+  const resetMessage =
+    attempts.length === 1 && attempts[0]?.reason === "rate_limit"
+      ? attempts[0].error
+      : attempts.length === 0 && params.reason === "rate_limit"
+        ? params.message
+        : undefined;
+  const resetCopy = resetMessage ? renderRateLimitResetCopy(resetMessage) : undefined;
+  if (resetCopy) {
+    return resetCopy;
   }
   if (attempts.length === 0) {
     if (params.reason === "rate_limit" && isPeriodicUsageLimitErrorMessage(params.message)) {

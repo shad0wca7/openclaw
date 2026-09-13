@@ -225,4 +225,74 @@ describe("buildExternalRunFailureReply", () => {
       }
     }
   });
+
+  it("preserves safe reset facts without forwarding a rate-limit response body", () => {
+    const message = "Subscription exhausted · resets 4:50am (America/Chicago) private-canary";
+    const reply = buildExternalRunFailureReply(
+      {
+        message,
+        error: new FailoverError(message, {
+          reason: "rate_limit",
+          provider: "custom-provider",
+          model: "test-model",
+          status: 429,
+        }),
+      },
+      { includeDetails: false },
+    );
+    expect(reply).toEqual({
+      text: "⚠️ Usage limit reached. Resets at 4:50am (America/Chicago). Try again after the reset.",
+      isGenericRunnerFailure: false,
+    });
+  });
+
+  it("does not present one fallback attempt's reset as the whole chain's reset", () => {
+    const message =
+      "All models failed (2): provider-a/model: resets 4:50am (America/Chicago) | provider-b/model: resets 5am (America/Chicago)";
+    const error = new FailoverError(message, {
+      reason: "rate_limit",
+      status: 429,
+      attempts: [
+        {
+          provider: "provider-a",
+          model: "model",
+          reason: "rate_limit",
+          error: "resets 4:50am (America/Chicago)",
+        },
+        {
+          provider: "provider-b",
+          model: "model",
+          reason: "rate_limit",
+          error: "resets 5am (America/Chicago)",
+        },
+      ],
+    });
+    const reply = buildExternalRunFailureReply({ message, error }, { includeDetails: false });
+    expect(reply.text).not.toContain("4:50am");
+    expect(reply.text).not.toContain("5am");
+  });
+
+  it("keeps classified HTTP status facts when verbose detail is off", () => {
+    const message =
+      "⚠️ openai/gpt-5.6-luna request failed (provider overloaded, HTTP 503). " +
+      "This is usually temporary — try again shortly.";
+    const reply = buildExternalRunFailureReply(
+      {
+        message,
+        error: new FailoverError(message, {
+          reason: "overloaded",
+          provider: "openai",
+          model: "gpt-5.6-luna",
+          status: 503,
+        }),
+      },
+      { includeDetails: false },
+    );
+
+    expect(reply.text).toBe(
+      "⚠️ The model provider returned a temporary internal error before replying. " +
+        "Try again in a moment, or switch to another model if it keeps happening.",
+    );
+    expect(reply.isGenericRunnerFailure).toBe(false);
+  });
 });
