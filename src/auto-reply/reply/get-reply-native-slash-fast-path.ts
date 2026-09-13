@@ -8,6 +8,7 @@ import {
   type ModelAliasIndex,
 } from "../../agents/model-selection.js";
 import { readPreparedModelCatalog } from "../../agents/prepared-model-catalog.js";
+import { resolveSessionModelRef } from "../../agents/session-model-ref.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { isModelSelectionLocked } from "../../sessions/model-overrides.js";
@@ -159,6 +160,11 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
     sessionState.sessionStore[sessionState.sessionKey] = persistedInitialEntry;
     sessionState.sessionId = persistedInitialEntry.sessionId;
   }
+  const pendingLiveModel = sessionState.sessionEntry.liveModelSwitchPending
+    ? resolveSessionModelRef(params.cfg, sessionState.sessionEntry, params.agentId)
+    : undefined;
+  const nativeTurnProvider = pendingLiveModel?.provider ?? params.provider;
+  const nativeTurnModel = pendingLiveModel?.model ?? params.model;
   const command = buildCommandContext({
     ctx: params.ctx,
     cfg: params.cfg,
@@ -172,7 +178,7 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
     const targetSessionEntry =
       sessionState.sessionStore[sessionState.sessionKey] ?? sessionState.sessionEntry;
     const canApplyStoredModel =
-      params.provider === params.defaultProvider && params.model === params.defaultModel;
+      nativeTurnProvider === params.defaultProvider && nativeTurnModel === params.defaultModel;
     const storedModelOverride = canApplyStoredModel
       ? resolveStoredModelOverride({
           sessionEntry: targetSessionEntry,
@@ -242,9 +248,21 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
     // Parent/channel preferences replace the base route. Direct session pins stay
     // with status's selected/active-model owner, which also supplies thinking defaults.
     const statusProvider =
-      resolvedInheritedModel?.provider ?? resolvedChannelModel?.ref.provider ?? params.provider;
+      resolvedInheritedModel?.provider ?? resolvedChannelModel?.ref.provider ?? nativeTurnProvider;
     const statusModel =
-      resolvedInheritedModel?.model ?? resolvedChannelModel?.ref.model ?? params.model;
+      resolvedInheritedModel?.model ?? resolvedChannelModel?.ref.model ?? nativeTurnModel;
+    let resolvedDefaultThinkingLevel: ThinkLevel | undefined;
+    const resolveDefaultThinkingLevel = async () => {
+      resolvedDefaultThinkingLevel ??= await resolveNativeSlashDefaultThinkingLevel({
+        cfg: params.cfg,
+        agentId: params.agentId,
+        provider: statusProvider,
+        model: statusModel,
+        agentDir: params.agentDir,
+        workspaceDir: params.workspaceDir,
+      });
+      return resolvedDefaultThinkingLevel;
+    };
     const resolvedThinkLevel = normalizeThinkLevel(targetSessionEntry?.thinkingLevel);
     // This fast path has no model-state owner; prepare side-effect-free catalog facts directly.
     const thinkingCatalog = await readPreparedModelCatalog({
@@ -347,12 +365,12 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
         blockReplyChunking: undefined,
         resolvedBlockStreamingBreak: "text_end",
         resolveDefaultThinkingLevel: async () => undefined,
-        provider: params.provider,
-        model: params.model,
+        provider: nativeTurnProvider,
+        model: nativeTurnModel,
         contextTokens: resolveContextTokens({
           cfg: params.cfg,
-          provider: params.provider,
-          model: params.model,
+          provider: nativeTurnProvider,
+          model: nativeTurnModel,
         }),
         isGroup: sessionState.isGroup,
         ...createSkillCommandLoaders(() => skillCommandsRuntimeLoader.load(), {
@@ -404,8 +422,8 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
     defaultProvider: params.defaultProvider,
     defaultModel: params.defaultModel,
     aliasIndex: params.aliasIndex,
-    provider: params.provider,
-    model: params.model,
+    provider: nativeTurnProvider,
+    model: nativeTurnModel,
     hasResolvedHeartbeatModelOverride: false,
     // Native selections reuse the admitted catalog just like ordinary turns.
     preparedModelCatalog: params.preparedModelCatalog,
