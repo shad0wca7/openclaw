@@ -162,6 +162,7 @@ export async function resolveUpdateCommandTarget(
       const pkgOwnership = createFreeBsdPkgOwnershipInspection(updateStepTimeoutMs);
       await pkgOwnership.assertUnowned(discoveredRoot);
       let { devTarget } = prepared;
+      const { devBranch } = prepared;
       let root = discoveredRoot;
       let updateInstallKind = installKind;
       let packageManager: ResolvedGlobalInstallTarget["manager"] | undefined;
@@ -269,6 +270,13 @@ export async function resolveUpdateCommandTarget(
               currentVersion: VERSION,
               installKind,
             }).channel);
+      if (devBranch !== undefined && (channel !== "dev" || installKind !== "git")) {
+        await refuseUpdate(
+          "invalid-dev-branch",
+          "OPENCLAW_UPDATE_DEV_BRANCH requires an existing Git installation on the dev channel.",
+        );
+        return undefined;
+      }
       if (channel === "extended-stable" && installKind === "git") {
         await refuseUpdate("unsupported_git_channel");
         return undefined;
@@ -625,6 +633,7 @@ export async function resolveUpdateCommandTarget(
         managedServiceNodeRunner,
         packageUpdateNodeRunner,
         devTarget,
+        devBranch,
       };
     });
   } catch (error) {

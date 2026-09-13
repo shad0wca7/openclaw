@@ -129,6 +129,7 @@ export async function handoffUpdateFromGateway(params: {
   tag?: string;
   timeoutMs: number;
   devTarget?: DevUpdateTarget;
+  devBranch?: string;
   nodeRunner?: string;
   invocationCwd?: string;
   stopProgress: () => void;
@@ -183,6 +184,7 @@ export async function handoffUpdateFromGateway(params: {
     channel: normalizeUpdateChannel(params.opts.channel) ?? undefined,
     tag: params.tag,
     devTarget: params.devTarget,
+    devBranch: params.devBranch,
     acceptCapabilities: params.opts.acceptCapabilities,
     reapplyLocalOverrides: params.opts.reapplyLocalOverrides,
     meta: { runId: params.opts.run?.runId },

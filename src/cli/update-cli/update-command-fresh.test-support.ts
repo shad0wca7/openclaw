@@ -67,6 +67,7 @@ export function installFreshUpdateFixture() {
       shouldRestart: opts.restart !== false,
       requestedChannel: opts.channel === "stable" ? "stable" : null,
       devTarget: undefined,
+      devBranch: undefined,
       controlPlaneUpdateSentinelMeta: null,
       discoveredRoot: fixture.root,
       installKind: "package",

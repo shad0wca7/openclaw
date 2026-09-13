@@ -334,6 +334,7 @@ export async function inspectGitDryRunTargetSchemaVersions(params: {
   timeoutMs: number;
   channel: UpdateChannel;
   devTarget?: DevUpdateTarget;
+  devBranch?: string;
 }): Promise<{ schemaVersions?: OpenClawSchemaVersions; metadataUnreadable?: string }> {
   const runCommand: GlobalCommandRunner = (argv, options) =>
     runCommandWithTimeout(argv, {
@@ -365,7 +366,10 @@ export async function inspectGitDryRunTargetSchemaVersions(params: {
     revision = selected;
   } else {
     const branch = await readBranchName(runTargetCommand, params.root, params.timeoutMs);
-    const needsCheckoutMain = branch !== DEV_BRANCH;
+    if (params.devBranch !== undefined && branch !== params.devBranch) {
+      return { metadataUnreadable: "the explicit dev branch is not the current checkout branch" };
+    }
+    const needsCheckoutMain = branch !== (params.devBranch ?? DEV_BRANCH);
     let remoteBranchRefs: string[] = [];
     if (needsCheckoutMain) {
       const remoteResult = await runCommand(["git", "-C", params.root, "remote"], {
@@ -421,6 +425,7 @@ export async function updateGitInstall(params: {
   progress: ReturnType<typeof createUpdateProgress>["progress"];
   channel: UpdateChannel;
   devTarget?: DevUpdateTarget;
+  devBranch?: string;
   beforeGitMutation: UpdateRunnerOptions["beforeGitMutation"];
   validateCandidate: UpdateRunnerOptions["validateCandidate"];
   assertCurrent?: () => void;
@@ -530,6 +535,7 @@ export async function updateGitInstall(params: {
         progress: params.progress,
         channel: params.channel,
         devTarget: params.devTarget,
+        devBranch: params.devBranch,
         beforeGitMutation:
           process.platform === "freebsd"
             ? async (target) => {

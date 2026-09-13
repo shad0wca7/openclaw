@@ -121,6 +121,7 @@ export async function preflightUpdateCommandSchemas(params: {
   channel: UpdateChannel;
   requestedChannel?: UpdateChannel | null;
   devTarget?: DevUpdateTarget;
+  devBranch?: string;
   packageTargetSchemaVersions?: OpenClawSchemaVersions;
   packageTargetVersion?: string;
   packageInstallSpec?: string | null;
@@ -149,6 +150,7 @@ export async function preflightUpdateCommandSchemas(params: {
     managedServiceRootRedirect,
     channel,
     devTarget,
+    devBranch,
     packageTargetSchemaVersions,
     opts,
     refuseUpdate,
@@ -204,6 +206,7 @@ export async function preflightUpdateCommandSchemas(params: {
               timeoutMs: updateStepTimeoutMs,
               channel,
               devTarget,
+              devBranch,
             })
           : { schemaVersions: packageTargetSchemaVersions };
       if ("metadataUnreadable" in target && target.metadataUnreadable) {

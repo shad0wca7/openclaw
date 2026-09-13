@@ -3,6 +3,7 @@ import {
   applyDevUpdateTargetEnv,
   devUpdateTargetFromGitTarget,
   parseDevUpdateTargetEnv,
+  readDevUpdateBranch,
   resolveDevUpdateTargetRevision,
 } from "./update-dev-target.js";
 
@@ -10,6 +11,42 @@ const TRACKED_VALUE =
   "openclaw-dev-target:v1:eyJ1cHN0cmVhbVJlZiI6Im9yaWdpbi9tYWluIiwidXBzdHJlYW1TaGEiOiJmcm96ZW4tc2hhIn0";
 
 describe("dev update target environment", () => {
+  it("reads an explicit local branch without changing default target selection", () => {
+    expect(readDevUpdateBranch({})).toBeUndefined();
+    expect(readDevUpdateBranch({ OPENCLAW_UPDATE_DEV_BRANCH: "integrate/live" })).toBe(
+      "integrate/live",
+    );
+  });
+
+  it.each([
+    "",
+    "HEAD",
+    "@{-1}",
+    "-bad",
+    "refs/heads/main",
+    "a..b",
+    "a.lock",
+    "a/.b",
+    "a//b",
+    "a/",
+    "a b",
+    "a\\b",
+    "a~1",
+  ])("refuses nonliteral branch %s", (branch) => {
+    expect(() => readDevUpdateBranch({ OPENCLAW_UPDATE_DEV_BRANCH: branch })).toThrow(
+      "literal local Git branch",
+    );
+  });
+
+  it("refuses branch selection mixed with a pinned target", () => {
+    expect(() =>
+      readDevUpdateBranch({
+        OPENCLAW_UPDATE_DEV_BRANCH: "integrate/live",
+        OPENCLAW_UPDATE_DEV_TARGET_REF: "main",
+      }),
+    ).toThrow("cannot be combined");
+  });
+
   it("preserves the legacy plain detached-ref contract", () => {
     expect(parseDevUpdateTargetEnv({ OPENCLAW_UPDATE_DEV_TARGET_REF: " refs/tags/dev " })).toEqual({
       status: "valid",

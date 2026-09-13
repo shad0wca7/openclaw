@@ -99,11 +99,12 @@ afterEach(async () => {
 
 async function startHandoffAndReadCommand(params: {
   runId?: string;
-  channel: "beta" | "extended-stable";
+  channel: "beta" | "extended-stable" | "dev";
   tag?: string;
   acceptCapabilities?: boolean;
   reapplyLocalOverrides?: boolean;
   devTarget?: DevUpdateTarget;
+  devBranch?: string;
   env?: NodeJS.ProcessEnv;
   restartDelayMs?: number;
   restartDrainTimeoutMs?: number;
@@ -129,6 +130,7 @@ async function startHandoffAndReadCommand(params: {
     argv1: "/opt/openclaw/openclaw.mjs",
     meta: {},
     ...(params.devTarget ? { devTarget: params.devTarget } : {}),
+    ...(params.devBranch ? { devBranch: params.devBranch } : {}),
     ...(params.env ? { env: params.env } : {}),
   });
   expect(forceKillChildProcessTreeMock).not.toHaveBeenCalled();
@@ -445,6 +447,17 @@ describe("managed service update handoff command", () => {
     expect(result.command).toContain("--accept-capabilities");
     expect(result.command).toContain("--yes");
     expect(result.command).not.toContain("--json");
+  });
+
+  it("carries the admitted integration branch through managed service handoff", async () => {
+    const result = await startHandoffAndReadCommand({
+      channel: "dev",
+      devBranch: "integrate/live",
+      env: { KEEP: "value", OPENCLAW_UPDATE_DEV_BRANCH: "stale-branch" },
+    });
+    expect(result.spawnEnv?.OPENCLAW_UPDATE_DEV_BRANCH).toBe("integrate/live");
+    expect(result.spawnEnv?.KEEP).toBe("value");
+    expect(result.commandArgv).toContain("dev");
   });
 
   it("merges a tracked target into the child environment without replacing caller fields", async () => {

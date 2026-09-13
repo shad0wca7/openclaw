@@ -25,6 +25,7 @@ import {
 } from "../../infra/update-control-plane-sentinel.js";
 import {
   parseDevUpdateTargetEnv,
+  readDevUpdateBranch,
   type DevUpdateTarget,
   UPDATE_DEV_TARGET_REF_ENV,
 } from "../../infra/update-dev-target.js";
@@ -615,6 +616,7 @@ export async function prepareUpdateCommand(opts: UpdateCommandOptions) {
       `--channel must be "stable", "extended-stable", "beta", or "dev" (got "${opts.channel}")`,
     );
   }
+  const devBranch = readDevUpdateBranch();
   let devTarget: DevUpdateTarget | undefined;
   if (requestedChannel === "dev") {
     devTarget = readDevUpdateTarget();
@@ -696,6 +698,7 @@ export async function prepareUpdateCommand(opts: UpdateCommandOptions) {
     shouldRestart,
     requestedChannel,
     devTarget,
+    devBranch,
     controlPlaneUpdateSentinelMeta,
     discoveredRoot,
     installKind,
