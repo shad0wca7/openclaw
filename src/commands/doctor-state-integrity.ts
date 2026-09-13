@@ -13,6 +13,7 @@ import { readAgentRosterProperty } from "../agents/agent-scope-config.js";
 import {
   listAgentIds,
   resolveDefaultAgentDir,
+  tryResolveAmbientOwnerAgentId,
   tryResolveDefaultAgentId,
 } from "../agents/agent-scope.js";
 import {
@@ -105,6 +106,13 @@ function existsFile(filePath: string): boolean {
   }
 }
 
+function tryResolveDoctorSessionOwnerAgentId(cfg: OpenClawConfig): string | undefined {
+  return cfg.agents?.ownership === "explicit"
+    ? tryResolveAmbientOwnerAgentId(cfg)
+    : tryResolveDefaultAgentId(cfg);
+}
+
+
 type RuntimeDirLabel = "Sessions dir" | "Session store dir" | "OAuth dir";
 
 export type StateIntegrityHealthIssue =
@@ -193,7 +201,7 @@ function listOrphanAgentDirs(cfg: OpenClawConfig, stateDir: string): OrphanAgent
   const configuredIds = new Set(listAgentIds(cfg));
   const sharedAuthOwnership = resolveSharedAuthStoreOwnership();
   const sharedAuthDbPath = resolveSharedAuthStorePath();
-  const defaultAgentId = tryResolveDefaultAgentId(cfg);
+  const defaultAgentId = tryResolveDoctorSessionOwnerAgentId(cfg);
 
   const agentsRoot = path.join(stateDir, "agents");
   const liveDefaultAgentDir = defaultAgentId ? resolveDefaultAgentDir(cfg) : undefined;
@@ -791,7 +799,7 @@ export function detectStateIntegrityHealthIssues(
   const homedir = () => resolveRequiredHomeDir(env, params?.homedir ?? os.homedir);
   const stateDir = resolveStateDir(env, homedir);
   const oauthDir = resolveOAuthDir(env, stateDir);
-  const agentId = tryResolveDefaultAgentId(cfg);
+  const agentId = tryResolveDoctorSessionOwnerAgentId(cfg);
   const sessionsDir = agentId
     ? resolveSessionTranscriptsDirForAgent(agentId, env, homedir)
     : undefined;
@@ -1090,7 +1098,7 @@ export async function noteStateIntegrity(
   const stateDir = resolveStateDir(env, homedir);
   const defaultStateDir = path.join(homedir(), ".openclaw");
   const oauthDir = resolveOAuthDir(env, stateDir);
-  const runtimeAgentId = tryResolveDefaultAgentId(cfg);
+  const runtimeAgentId = tryResolveDoctorSessionOwnerAgentId(cfg);
   const runtimeSessionsDir = runtimeAgentId
     ? resolveSessionTranscriptsDirForAgent(runtimeAgentId, env, homedir)
     : undefined;

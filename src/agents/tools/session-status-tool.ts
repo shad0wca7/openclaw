@@ -43,11 +43,7 @@ import {
   isDeliverableMessageChannel,
   normalizeMessageChannel,
 } from "../../utils/message-channel.js";
-import {
-  resolveAgentDir,
-  resolveAgentWorkspaceDir,
-  resolveSessionAgentIds,
-} from "../agent-scope.js";
+import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agent-scope.js";
 import { resolveDefaultModelForAgent } from "../model-selection.js";
 import { resolveThinkingDefault } from "../model-thinking-default.js";
 import { loadPublishedPreparedModelCatalog } from "../prepared-model-catalog.js";
@@ -80,6 +76,7 @@ import {
   resolveSessionReference,
   resolveSessionToolAccess,
   resolveSessionToolContext,
+  resolveSessionToolRequesterAgentId,
   resolveVisibleSessionReference,
   shouldResolveSessionIdInput,
 } from "./sessions-helpers.js";
@@ -487,11 +484,11 @@ export function createSessionStatusTool(opts?: {
         sessionVisibility,
         a2aPolicy,
       } = resolveSessionToolContext(opts);
-      const requesterAgentId = resolveSessionAgentIds({
-        config: cfg,
-        sessionKey: opts?.agentSessionKey ?? effectiveRequesterKey,
-        agentId: opts?.requesterAgentIdOverride,
-      }).sessionAgentId;
+      const requesterAgentId = resolveSessionToolRequesterAgentId({
+        cfg,
+        effectiveRequesterKey: opts?.agentSessionKey ?? effectiveRequesterKey,
+        requesterAgentId: opts?.requesterAgentIdOverride,
+      });
       const configuredDefaultAgentId = requesterAgentId;
       const visibilityRequesterKey = (opts?.agentSessionKey ?? effectiveRequesterKey).trim();
       const usesLegacyMainAlias = alias === mainKey;

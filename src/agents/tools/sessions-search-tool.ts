@@ -3,9 +3,13 @@ import { Type } from "typebox";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
 import { redactToolPayloadText } from "../../logging/redact.js";
-import { isIncognitoSessionKey, parseAgentSessionKey } from "../../routing/session-key.js";
+import {
+  isIncognitoSessionKey,
+  normalizeAgentId,
+  parseAgentSessionKey,
+} from "../../routing/session-key.js";
 import { truncateUtf16Safe } from "../../utils.js";
-import { resolveSessionAgentId } from "../agent-scope.js";
+import { listAgentIds, resolveSessionAgentId } from "../agent-scope.js";
 import { optionalPositiveIntegerSchema } from "../schema/typebox.js";
 import {
   describeSessionLinkRule,
@@ -34,6 +38,7 @@ import {
   resolveSessionReference,
   resolveSessionToolAccess,
   resolveSessionToolContext,
+  resolveSessionToolRequesterAgentId,
   resolveVisibleSessionReference,
 } from "./sessions-helpers.js";
 
@@ -367,10 +372,10 @@ export function createSessionsSearchTool(opts?: {
         sessionVisibility: visibility,
         a2aPolicy,
       } = resolveSessionToolContext(opts);
-      const requesterAgentId = resolveSessionAgentId({
-        sessionKey: effectiveRequesterKey,
-        config: cfg,
-        agentId: opts?.agentId,
+      const requesterAgentId = resolveSessionToolRequesterAgentId({
+        cfg,
+        effectiveRequesterKey,
+        requesterAgentId: opts?.agentId,
       });
 
       let sessionTarget:
@@ -478,6 +483,8 @@ export function createSessionsSearchTool(opts?: {
           sessionTarget.expectedSessionId = access.expectedSessionId;
         }
       }
+      const configuredAgentIds = new Set(listAgentIds(cfg).map(normalizeAgentId));
+      const requireConfiguredOwner = cfg.agents?.ownership === "explicit";
       const searchSessions = (
         sessionTarget
           ? [
@@ -494,13 +501,24 @@ export function createSessionsSearchTool(opts?: {
             ]
           : await listVisibleSearchSessions({
               unscopedAgentId: requesterAgentId,
-              effectiveRequesterAgentId: opts?.agentId,
+              effectiveRequesterAgentId: requesterAgentId,
               effectiveRequesterKey,
               gatewayCall,
               rowGuard,
               restrictToSpawned,
             })
       )
+        // Combined listings can retain rows from retired native harness stores.
+        // The search RPC rejects those owners, so exclude them before grouping.
+        .filter((candidate) => {
+          const candidateAgentId =
+            parseAgentSessionKey(candidate.key)?.agentId ?? candidate.agentId;
+          return (
+            !requireConfiguredOwner ||
+            candidateAgentId === undefined ||
+            configuredAgentIds.has(normalizeAgentId(candidateAgentId))
+          );
+        })
         // Search excerpts are re-persisted in the caller transcript; incognito
         // sessions therefore stay absent even when the caller could otherwise see them.
         .filter((candidate) => !isIncognitoSessionKey(candidate.key));
