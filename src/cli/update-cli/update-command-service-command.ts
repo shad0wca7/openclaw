@@ -191,6 +191,11 @@ export async function runUpdatedInstallGatewayCommand(
     }),
   );
   if (executor) {
+    // Target service identity selects the job; its membership markers do not
+    // describe this external executor child. Native PID ancestry still applies.
+    for (const key of ["LAUNCH_JOB_LABEL", "LAUNCH_JOB_NAME", "XPC_SERVICE_NAME"]) {
+      delete commandEnv[key];
+    }
     commandEnv.OPENCLAW_NO_RESPAWN = "1";
   }
   params.signal?.throwIfAborted();

@@ -41,6 +41,109 @@ const dirs = useAutoCleanupTempDirTracker(afterEach);
 afterEach(() => vi.restoreAllMocks());
 
 it.each([
+  { markers: "wrapper", inside: false },
+  { markers: "launchd", inside: false },
+  { markers: "wrapper", inside: true },
+])(
+  "native restart distinguishes target markers from job ancestry: $markers / $inside",
+  async ({ markers, inside }) => {
+    const scratch = dirs.make("native-restart-membership-");
+    const root = await fs.realpath(process.cwd());
+    const label = "test.openclaw.native-restart";
+    const control = path.join(scratch, "control");
+    await fs.mkdir(control);
+    vi.spyOn(tempRoot, "resolvePreferredOpenClawTmpDir").mockReturnValue(control);
+    const receipt = path.join(scratch, "native-actions");
+    const entrypoint = path.join(scratch, "entry.mjs");
+    const native = path.join(scratch, "launchctl.mjs");
+    await fs.writeFile(
+      native,
+      `
+    export * from ${JSON.stringify(new URL("../../daemon/launchd-exec.ts", import.meta.url).href)};
+    import fs from "node:fs";
+    export async function execLaunchctl(args) {
+      const result = { code: 0, stdout: "", stderr: "", termination: "exit" };
+      if (args[0] === "print") {
+        if (args[1].startsWith("system/")) return { ...result, code: 113, stderr: "Could not find service" };
+        return { ...result, stdout: ${inside ? '"state = running\\npid = " + process.ppid' : '"state = waiting"'} };
+      }
+      if (!["enable", "kickstart"].includes(args[0])) throw new Error("Unexpected native action: " + args.join(" "));
+      fs.appendFileSync(${JSON.stringify(receipt)}, JSON.stringify(args) + "\\n");
+      return result;
+    }
+  `,
+    );
+    await fs.writeFile(
+      entrypoint,
+      `
+    await import(${JSON.stringify(new URL("../../../scripts/tsx.mjs", import.meta.url).href)});
+    const { registerHooks } = await import("node:module");
+    const { pathToFileURL } = await import("node:url");
+    const native = pathToFileURL(${JSON.stringify(native)}).href;
+    registerHooks({ resolve(specifier, context, next) {
+      if (context.parentURL !== native && ["launchd-exec.js", "launchd-exec.ts"].some(name => specifier.endsWith(name))) return { url: native, shortCircuit: true };
+      return next(specifier, context);
+    }});
+    const { runGatewayServiceUpdateCommand } = await import(${JSON.stringify(new URL("../daemon-cli/update-executor.ts", import.meta.url).href)});
+    const mode = process.argv[process.argv.indexOf("--update-executor") + 1];
+    try {
+      await runGatewayServiceUpdateCommand(mode, "restart", async () => {
+        const { restartLaunchAgent } = await import(${JSON.stringify(new URL("../../daemon/launchd-lifecycle.ts", import.meta.url).href)});
+        const result = await restartLaunchAgent({ env: process.env, preserveDefinition: true, stdout: { write() {} } });
+        if (result.outcome !== "completed") throw new Error("Native restart was detached");
+        process.stdout.write(JSON.stringify({ action: "restart", ok: true, result: "restarted" }));
+      });
+    } catch (error) { process.stderr.write(error.message); process.exitCode = 1; }
+  `,
+    );
+    vi.spyOn(entrypoints, "resolveGatewayInstallEntrypoint").mockResolvedValue(entrypoint);
+    const env = {
+      ...process.env,
+      HOME: scratch,
+      OPENCLAW_STATE_DIR: path.join(scratch, "state"),
+      OPENCLAW_CONFIG_PATH: path.join(scratch, "config.json"),
+      OPENCLAW_GATEWAY_PORT: undefined,
+    };
+    const runId = randomUUID();
+    const work = withUpdateCommandExecutor(runId, async (executor) => {
+      const fence = await executor.enter(root);
+      return await runUpdatedInstallGatewayCommand(
+        {
+          result: { root },
+          opts: { json: true, run: { runId, env, executorFence: fence } },
+          invocationEnv: env,
+          serviceEnv: {
+            OPENCLAW_LAUNCHD_LABEL: label,
+            OPENCLAW_SERVICE_MARKER: "openclaw",
+            OPENCLAW_SERVICE_KIND: "gateway",
+            ...(markers === "launchd"
+              ? { LAUNCH_JOB_LABEL: label, LAUNCH_JOB_NAME: label, XPC_SERVICE_NAME: label }
+              : {}),
+          },
+          timeoutMs: 20_000,
+        },
+        "restart",
+        true,
+      );
+    });
+    if (inside) {
+      await expect(work).rejects.toThrow("requires an external executor");
+      await expect(fs.stat(receipt)).rejects.toMatchObject({ code: "ENOENT" });
+    } else {
+      expect(await work).toBe("accepted");
+      const actions = (await fs.readFile(receipt, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(actions).toEqual([
+        ["enable", expect.stringContaining(label)],
+        ["kickstart", "-k", expect.stringContaining(label)],
+      ]);
+    }
+  },
+);
+
+it.each([
   { supported: true, destination: "same" },
   { supported: false, destination: "same" },
   { supported: "legacy", destination: "same" },
