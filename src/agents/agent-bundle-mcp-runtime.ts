@@ -32,6 +32,7 @@ import type {
   SessionMcpRuntime,
   SessionMcpRuntimeManager,
 } from "./agent-bundle-mcp-types.js";
+import { recordModelFallbackStop } from "./failover-error.js";
 import {
   connectMcpClient,
   disposeMcpClient,
@@ -1120,7 +1121,11 @@ function createServerMcpRuntime(
       await Promise.allSettled(pendingDisposals);
       if (cleanupFailed) {
         recordAgentCleanupFailure();
-        throw new Error("MCP runtime cleanup could not confirm closure");
+        const failure = new Error("MCP runtime cleanup could not confirm closure");
+        // Every model shares these resources. A provider switch cannot settle
+        // uncertain ownership and must not replay the turn on another model.
+        recordModelFallbackStop(failure);
+        throw failure;
       }
     },
     dispose() {

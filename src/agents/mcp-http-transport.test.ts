@@ -626,8 +626,8 @@ describe("OpenClaw MCP HTTP lifecycle adapters", () => {
     }
   });
 
-  it("accepts unsupported session DELETE without sending it again", async () => {
-    const onDelete = vi.fn(() => new Response(null, { status: 405 }));
+  it.each([404, 405])("accepts session DELETE HTTP %s without sending it again", async (status) => {
+    const onDelete = vi.fn(() => new Response(null, { status }));
     const fetchMock = initializedFetch({
       onGet: () => new Response(null, { status: 405 }),
       onDelete,
@@ -645,28 +645,34 @@ describe("OpenClaw MCP HTTP lifecycle adapters", () => {
     expect(onDelete).toHaveBeenCalledOnce();
   });
 
-  it("does not record a rejected DELETE as successful termination", async () => {
-    const onDelete = vi.fn(() => new Response("refused", { status: 500, statusText: "Rejected" }));
-    const fetchMock = initializedFetch({
-      onGet: () => new Response(null, { status: 405 }),
-      onDelete,
-    });
-    const transport = new OpenClawStreamableHTTPClientTransport(new URL("http://mcp.invalid/mcp"), {
-      fetch: fetchMock,
-    });
-    const client = new Client({ name: "test", version: "1" });
-    await client.connect(transport);
-    await expect(transport.terminateSession()).rejects.toThrow(
-      "Failed to terminate session: Rejected",
-    );
-    await expect(transport.terminateSession()).rejects.toThrow(
-      "Failed to terminate session: Rejected",
-    );
-    await expect(
-      disposeMcpClient({ client, transport, transportType: "streamable-http" }),
-    ).resolves.toBe("uncertain");
-    expect(onDelete).toHaveBeenCalledTimes(3);
-  });
+  it.each([401, 403, 500, 503])(
+    "does not record DELETE HTTP %s as successful termination",
+    async (status) => {
+      const onDelete = vi.fn(() => new Response("refused", { status, statusText: "Rejected" }));
+      const fetchMock = initializedFetch({
+        onGet: () => new Response(null, { status: 405 }),
+        onDelete,
+      });
+      const transport = new OpenClawStreamableHTTPClientTransport(
+        new URL("http://mcp.invalid/mcp"),
+        {
+          fetch: fetchMock,
+        },
+      );
+      const client = new Client({ name: "test", version: "1" });
+      await client.connect(transport);
+      await expect(transport.terminateSession()).rejects.toThrow(
+        "Failed to terminate session: Rejected",
+      );
+      await expect(transport.terminateSession()).rejects.toThrow(
+        "Failed to terminate session: Rejected",
+      );
+      await expect(
+        disposeMcpClient({ client, transport, transportType: "streamable-http" }),
+      ).resolves.toBe("uncertain");
+      expect(onDelete).toHaveBeenCalledTimes(3);
+    },
+  );
 
   it("does not fetch another notification stream after close returns", async () => {
     let getCount = 0;
