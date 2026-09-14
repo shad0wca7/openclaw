@@ -182,6 +182,28 @@ describe("executeAgentTurn: lifecycle progress", () => {
           args: { command: "pnpm test" },
         },
       });
+      await params.onAgentEvent?.({
+        stream: "item",
+        data: {
+          itemId: "cmd-1",
+          toolCallId: "cmd-1",
+          kind: "command",
+          name: "bash",
+          phase: "end",
+          status: "failed",
+          suppressChannelProgress: true,
+        },
+      });
+      await params.onAgentEvent?.({
+        stream: "tool",
+        data: {
+          itemId: "cmd-1",
+          toolCallId: "cmd-1",
+          name: "bash",
+          phase: "result",
+          isError: true,
+        },
+      });
       return { payloads: [{ text: "final" }], meta: {} };
     });
 

@@ -346,6 +346,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
       );
       const draftController = await createMatrixDraftController({
         streaming: allowProviderPreview ? streaming : "off",
+        conversationTimeline: isDirectMessage,
         previewToolProgressEnabled: allowProviderPreview && previewToolProgressEnabled,
         replyToMode,
         messageId,
@@ -502,6 +503,8 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
             },
             replyOptions: {
               skillFilter: roomConfig?.skills,
+              commentaryPayloadsEnabled: isDirectMessage,
+              preserveProgressCallbackStartOrder: isDirectMessage,
               // Preserve explicit block streaming with draft previews: drafts update the live
               // block, while block deliveries finalize completed blocks as separate events.
               disableBlockStreaming: !blockStreamingEnabled,
@@ -510,7 +513,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                 : undefined,
               onBlockReplyQueued: draftStream
                 ? (payload, context) => {
-                    if (payload.isCompactionNotice === true) {
+                    if (payload.isCompactionNotice === true || payload.isCommentary === true) {
                       return false;
                     }
                     draftController.queueDraftBlockBoundary(payload, context);
@@ -624,6 +627,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
     } finally {
       // Stop the draft stream timer so partial drafts don't leak if the
       // model run throws or times out mid-stream.
+      await draftControllerRef?.cancelProgressDraft();
       const draftStream = draftControllerRef?.draftStream;
       if (draftStream) {
         await draftStream.stop().catch(() => undefined);

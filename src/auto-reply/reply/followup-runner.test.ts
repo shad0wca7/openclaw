@@ -748,6 +748,38 @@ describe("createFollowupRunner", () => {
     },
   );
 
+  it("delivers native queued commentary through the normal block owner before terminal handling", async () => {
+    const turn = createTurn();
+    const commentary = { text: "Checking the queued request.", isCommentary: true };
+    state.admit.mockResolvedValue({ kind: "admitted", turn });
+    state.account.mockResolvedValue(undefined);
+    state.execute.mockImplementation(
+      async (
+        params: Parameters<typeof import("./followup-turn-execution.js").executeFollowupTurn>[0],
+      ) => {
+        await params.onCommentaryPayload(commentary, { runId: turn.runId });
+        expect(state.account).not.toHaveBeenCalled();
+        return createRejectedExecution();
+      },
+    );
+
+    await createFollowupRunner({
+      typing: createTypingController(),
+      typingMode: "never",
+      defaultModel: "claude",
+    })(turn.queued);
+
+    expect(state.deliver).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        decision: { kind: "deliver", payloads: [commentary] },
+        turn,
+        runId: turn.runId,
+        kind: "block",
+      }),
+    );
+  });
+
   it("does not replay a settled turn when progress presentation fails", async () => {
     const typing = createTypingController();
     const turn = createTurn();

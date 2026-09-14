@@ -17,6 +17,7 @@ import type {
   FallbackRunnerParams,
   EmbeddedAgentParams,
 } from "./agent-runner-execution.test-support.js";
+import { createMockReplyOperation, createMockTypingController } from "./test-helpers.js";
 
 const state = await setupAgentRunnerExecutionTestState();
 
@@ -148,68 +149,98 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     expect(previewOrder).toEqual(["Hello", "Hello released", "Hello world"]);
   });
 
-  it("bridges CLI tool agent events into onToolStart for live preview", async () => {
-    state.isCliProviderMock.mockReturnValue(true);
-    state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
-      result: await runInitialFallbackAttempt(params, "claude-cli", "claude-opus-4-6"),
-      provider: "claude-cli",
-      model: "claude-opus-4-6",
-      attempts: [],
-    }));
-    state.runCliAgentMock.mockImplementationOnce(
-      async (params: { runId: string; emitCommentaryText?: boolean }) => {
-        expect(params.emitCommentaryText).toBe(false);
-        const realAgentEvents = await vi.importActual<typeof import("../../infra/agent-events.js")>(
-          "../../infra/agent-events.js",
-        );
-        realAgentEvents.emitAgentEvent({
-          runId: params.runId,
-          stream: "tool",
-          data: {
-            phase: "start",
-            name: "Bash",
-            toolCallId: "toolu_01ABCD",
-            args: { command: "ls -la" },
-          },
-        });
-        realAgentEvents.emitAgentEvent({
-          runId: params.runId,
-          stream: "tool",
-          data: {
-            phase: "result",
-            name: "Bash",
-            toolCallId: "toolu_01ABCD",
-            isError: false,
-          },
-        });
-        return { payloads: [{ text: "done" }], meta: {} };
-      },
-    );
+  it.each([false, true])(
+    "bridges CLI tool outcomes before summaries (ordered=%s)",
+    async (preserveProgressCallbackStartOrder) => {
+      state.isCliProviderMock.mockReturnValue(true);
+      state.runWithModelFallbackMock.mockImplementationOnce(
+        async (params: FallbackRunnerParams) => ({
+          result: await runInitialFallbackAttempt(params, "claude-cli", "claude-opus-4-6"),
+          provider: "claude-cli",
+          model: "claude-opus-4-6",
+          attempts: [],
+        }),
+      );
+      state.runCliAgentMock.mockImplementationOnce(
+        async (params: { runId: string; emitCommentaryText?: boolean }) => {
+          expect(params.emitCommentaryText).toBe(false);
+          const realAgentEvents = await vi.importActual<
+            typeof import("../../infra/agent-events.js")
+          >("../../infra/agent-events.js");
+          realAgentEvents.emitAgentEvent({
+            runId: params.runId,
+            stream: "tool",
+            data: {
+              phase: "start",
+              name: "Bash",
+              toolCallId: "toolu_01ABCD",
+              args: { command: "ls -la" },
+            },
+          });
+          realAgentEvents.emitAgentEvent({
+            runId: params.runId,
+            stream: "tool",
+            data: {
+              phase: "result",
+              name: "Bash",
+              toolCallId: "toolu_01ABCD",
+              isError: false,
+            },
+          });
+          return { payloads: [{ text: "done" }], meta: {} };
+        },
+      );
 
-    const onToolStart = vi.fn<NonNullable<GetReplyOptions["onToolStart"]>>(async () => undefined);
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-6";
+      const order: string[] = [];
+      const onToolStart = vi.fn<NonNullable<GetReplyOptions["onToolStart"]>>(async (payload) => {
+        order.push(payload.phase ?? "unknown");
+        await Promise.resolve();
+        return true;
+      });
+      const onItemEvent = vi.fn<NonNullable<GetReplyOptions["onItemEvent"]>>(async (payload) => {
+        order.push(payload.phase ?? "unknown");
+        await Promise.resolve();
+        return true;
+      });
+      const onToolResult = vi.fn<NonNullable<GetReplyOptions["onToolResult"]>>(async () => {
+        order.push("summary");
+      });
+      const executeAgentTurn = await getExecuteAgentTurnForTest();
+      const followupRun = createFollowupRun();
+      followupRun.run.provider = "claude-cli";
+      followupRun.run.model = "claude-opus-4-6";
 
-    await executeAgentTurn({
-      commandBody: "hi",
-      followupRun,
-      sessionCtx: { Provider: "telegram", MessageSid: "msg" } as unknown as TemplateContext,
-      opts: { onToolStart },
-      typingSignals: createMockTypingSignaler(),
-      ...createAgentTurnExecutionDefaults(),
-    });
-    await new Promise((resolve) => {
-      setImmediate(resolve);
-    });
+      await executeAgentTurn({
+        commandBody: "hi",
+        followupRun,
+        sessionCtx: { Provider: "telegram", MessageSid: "msg" } as unknown as TemplateContext,
+        opts: { onToolStart, onItemEvent, onToolResult, preserveProgressCallbackStartOrder },
+        typingSignals: createMockTypingSignaler(),
+        ...createAgentTurnExecutionDefaults(),
+      });
+      await new Promise((resolve) => {
+        setImmediate(resolve);
+      });
 
-    expect(onToolStart).toHaveBeenCalledTimes(1);
-    const call = onToolStart.mock.calls[0]?.[0];
-    expect(call?.name).toBe("Bash");
-    expect(call?.phase).toBe("start");
-    expect(call?.args).toEqual({ command: "ls -la" });
-  });
+      expect(onToolStart).toHaveBeenCalledTimes(1);
+      expect(onItemEvent.mock.calls[0]?.[0]).toEqual({
+        itemId: "toolu_01ABCD",
+        toolCallId: "toolu_01ABCD",
+        kind: "tool",
+        name: "Bash",
+        phase: "end",
+        status: "completed",
+      });
+      expect(onToolResult.mock.calls[0]?.[0].channelData).toEqual({
+        openclawToolProgressId: "toolu_01ABCD",
+      });
+      expect(order).toEqual(["start", "end", "summary"]);
+      const call = onToolStart.mock.calls[0]?.[0];
+      expect(call?.name).toBe("Bash");
+      expect(call?.phase).toBe("start");
+      expect(call?.args).toEqual({ command: "ls -la" });
+    },
+  );
 
   it("starts CLI assistant progress before a later tool while typing is slow", async () => {
     state.isCliProviderMock.mockReturnValue(true);
@@ -426,6 +457,104 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     expect(call?.progressText).toBe("Let me check the files.");
     expect(call?.itemId).toBe("commentary-1");
   });
+
+  it.each(["off", "on"] as const)(
+    "delivers completed queued CLI commentary before activity with verbosity %s",
+    async (verboseLevel) => {
+      state.isCliProviderMock.mockReturnValue(true);
+      state.runWithModelFallbackMock.mockImplementationOnce(
+        async (params: FallbackRunnerParams) => ({
+          result: await runInitialFallbackAttempt(params, "claude-cli", "claude-opus-4-6"),
+          provider: "claude-cli",
+          model: "claude-opus-4-6",
+          attempts: [],
+        }),
+      );
+      state.runCliAgentMock.mockImplementationOnce(
+        async (params: { runId: string; emitCommentaryText?: boolean }) => {
+          expect(params.emitCommentaryText).toBe(true);
+          const { emitAgentEvent } = await import("../../infra/agent-events.js");
+          // This is the completed segment emitted by the CLI execute-events owner,
+          // not a native-provider callback injected after the CLI bridges.
+          emitAgentEvent({
+            runId: params.runId,
+            stream: "item",
+            data: {
+              kind: "preamble",
+              itemId: "cli-commentary-1",
+              phase: "end",
+              progressText: "Checking the queued CLI request.",
+            },
+          });
+          emitAgentEvent({
+            runId: params.runId,
+            stream: "tool",
+            data: {
+              phase: "start",
+              name: "Read",
+              toolCallId: "call-1",
+              args: { path: "README.md" },
+            },
+          });
+          return { payloads: [{ text: "done" }], meta: {} };
+        },
+      );
+      const queued = createFollowupRun();
+      queued.run.provider = "claude-cli";
+      queued.run.model = "claude-opus-4-6";
+      queued.run.verboseLevelOverride = verboseLevel;
+      const order: string[] = [];
+      const onCommentaryPayload = vi.fn(async (payload: { text?: string }) => {
+        order.push(payload.text ?? "");
+      });
+      const onToolResult = vi.fn(async () => {});
+      const { executeFollowupTurn } = await import("./followup-turn-execution.js");
+      const result = await executeFollowupTurn({
+        turn: {
+          runId: "queued-cli-run",
+          queued,
+          operation: createMockReplyOperation().replyOperation,
+          config: {},
+          session: {
+            kind: "detached",
+            current: () => undefined,
+            publish: () => undefined,
+            adopt: () => undefined,
+          },
+          sendPolicy: "allow",
+          preflightCompactionApplied: false,
+        },
+        defaults: {
+          typing: createMockTypingController(),
+          typingMode: "never",
+          defaultModel: "claude-opus-4-6",
+          opts: {
+            commentaryPayloadsEnabled: true,
+            progressPreambleEnabled: true,
+            preserveProgressCallbackStartOrder: true,
+            suppressDefaultToolProgressMessages: true,
+            onItemEvent: () => false,
+            onToolStart: () => {
+              order.push("activity");
+              return true;
+            },
+          },
+        },
+        onCommentaryPayload,
+        onToolResult,
+        onCompactionNoticePayload: vi.fn(async () => {}),
+      });
+      await result.progress.drain();
+
+      expect(result.execution.outcome.kind).toBe("settled");
+      expect(onCommentaryPayload).toHaveBeenCalledExactlyOnceWith(
+        { text: "Checking the queued CLI request.", isCommentary: true },
+        { runId: "queued-cli-run" },
+      );
+      expect(onToolResult).not.toHaveBeenCalled();
+      expect(order).toEqual(["Checking the queued CLI request.", "activity"]);
+    },
+  );
 
   it("does not emit CLI preambles when both progress lanes are disabled", async () => {
     state.isCliProviderMock.mockReturnValue(true);

@@ -264,12 +264,22 @@ export async function runCliFallbackCandidate(
           onCompactionStart: turn.opts?.onCompactionStart,
           onCompactionEnd: turn.opts?.onCompactionEnd,
           onToolEvent: async (payload) => {
-            if (!params.preserveProgressCallbackStartOrder) {
+            if (payload.phase === "result") {
+              // Settle channel-owned activity before its correlated verbose echo.
+              await turn.opts?.onItemEvent?.({
+                itemId: payload.toolCallId,
+                toolCallId: payload.toolCallId,
+                kind: "tool",
+                name: payload.name,
+                phase: "end",
+                status: payload.isError ? "failed" : "completed",
+              });
               const commandBearing = await cliToolSummaryTracker.noteToolEvent(payload);
-              if (payload.phase === "result") {
-                await deliverCliCommandOutcome(payload, commandBearing);
-                return;
-              }
+              await deliverCliCommandOutcome(payload, commandBearing);
+              return;
+            }
+            if (!params.preserveProgressCallbackStartOrder) {
+              await cliToolSummaryTracker.noteToolEvent(payload);
               const { name, phase, args, toolCallId } = payload;
               await Promise.all([
                 turn.typingSignals.signalToolStart(),
@@ -284,11 +294,6 @@ export async function runCliFallbackCandidate(
               return;
             }
             const summaryPromise = cliToolSummaryTracker.noteToolEvent(payload);
-            if (payload.phase === "result") {
-              const commandBearing = await summaryPromise;
-              await deliverCliCommandOutcome(payload, commandBearing);
-              return;
-            }
             const { name, phase, args, toolCallId } = payload;
             // Tool and assistant bridges drain independently. Preserve source order.
             await Promise.all([
@@ -317,6 +322,7 @@ export async function runCliFallbackCandidate(
                       turn.opts?.onItemEvent?.({
                         itemId: payload.itemId,
                         kind: "preamble",
+                        phase: payload.phase,
                         progressText: payload.text,
                         // The block bridge owns durability; this event remains a progress preview.
                         ...(bridgeCliDurableCommentary ? { suppressDurableProgress: true } : {}),

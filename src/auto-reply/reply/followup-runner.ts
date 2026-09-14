@@ -154,6 +154,16 @@ export function createFollowupRunner(
       admittedRunId = turn.runId;
       operation = turn.operation;
       queuedFollowupAdmitted = true;
+      const deliverBlockPayload = async (payload: ReplyPayload, identity: { runId: string }) => {
+        await deliverFollowupDecision({
+          decision: { kind: "deliver", payloads: [payload] },
+          turn,
+          defaults,
+          runId: identity.runId,
+          runFollowup,
+          kind: "block",
+        });
+      };
       const execution = await executeFollowupTurn({
         turn,
         defaults,
@@ -167,16 +177,8 @@ export function createFollowupRunner(
             kind: "tool",
           });
         },
-        onCompactionNoticePayload: async (payload, identity) => {
-          await deliverFollowupDecision({
-            decision: { kind: "deliver", payloads: [payload] },
-            turn,
-            defaults,
-            runId: identity.runId,
-            runFollowup,
-            kind: "block",
-          });
-        },
+        onCommentaryPayload: deliverBlockPayload,
+        onCompactionNoticePayload: deliverBlockPayload,
       });
       // A closed execution result is terminal queue work. Commit consumption
       // before accounting/delivery so their failures cannot replay model or tool effects.

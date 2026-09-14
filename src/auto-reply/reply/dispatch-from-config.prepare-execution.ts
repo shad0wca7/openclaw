@@ -22,6 +22,7 @@ import { loadGetReplyFromConfigRuntime } from "./dispatch-from-config.runtime-lo
 import { withFullRuntimeReplyConfig } from "./get-reply-fast-path.js";
 import { shouldBridgeCliPreambleEvents } from "./get-reply.types.js";
 import { waitForReplyDispatcherIdle } from "./reply-dispatcher.js";
+import { createToolProgressEchoTracker } from "./tool-progress-echo.js";
 import { resolveRunTypingPolicy } from "./typing-policy.js";
 
 export async function prepareDispatchExecution(state: ChooseDispatchRouteReadyState) {
@@ -250,6 +251,7 @@ export async function prepareDispatchExecution(state: ChooseDispatchRouteReadySt
             return result;
           }
           await options?.onVisible?.(...args);
+          return result;
         }
         return undefined;
       } finally {
@@ -269,6 +271,28 @@ export async function prepareDispatchExecution(state: ChooseDispatchRouteReadySt
       })();
     };
   };
+
+  const { trackToolProgressCallback, isVisibleToolProgressEcho } = createToolProgressEchoTracker(
+    params.replyOptions?.suppressDefaultToolProgressMessages === true,
+  );
+  const onToolStart = trackToolProgressCallback(
+    wrapProgressCallback(params.replyOptions?.onToolStart, {
+      allowWhenToolSummariesHidden:
+        params.replyOptions?.allowToolLifecycleWhenProgressHidden === true,
+      forwardWhenSourceDeliverySuppressed: true,
+      requiresToolSummaryVisibility: true,
+      waitForDirectBlockReplyDelivery: true,
+      // Commentary precedes the tool that follows it.
+      onForward: () => state.flushPendingCommentaryProgress(),
+    }),
+  );
+  const onCommandOutput = trackToolProgressCallback(
+    wrapProgressCallback(params.replyOptions?.onCommandOutput, {
+      forwardWhenSourceDeliverySuppressed: true,
+      requiresToolSummaryVisibility: true,
+      waitForDirectBlockReplyDelivery: true,
+    }),
+  );
 
   const reasoningCallback = params.replyOptions?.onReasoningStream;
   const onReasoningStream = reasoningCallback
@@ -304,7 +328,8 @@ export async function prepareDispatchExecution(state: ChooseDispatchRouteReadySt
       resolveVerboseProgressVisibility,
     });
   const deliverStandaloneCommentaryProgress =
-    standaloneCommentaryProgressVisible && !draftOwnsCommentaryProgress;
+    (standaloneCommentaryProgressVisible || commentaryPayloadsEnabled) &&
+    !draftOwnsCommentaryProgress;
   const itemEventForwardingOptions = {
     forwardWhenSourceDeliverySuppressed: true,
     requiresToolSummaryVisibility: true,
@@ -321,14 +346,16 @@ export async function prepareDispatchExecution(state: ChooseDispatchRouteReadySt
     payload.kind === "preamble" &&
     payload.suppressDurableProgress !== true;
   const forwardItemEvent = canForwardItemEvents
-    ? wrapProgressCallback(params.replyOptions?.onItemEvent, {
-        ...itemEventForwardingOptions,
-        waitForDirectBlockReplyDelivery: true,
-        onForward: (payload) =>
-          preserveProgressCallbackStartOrder && shouldDeliverDurableCommentaryProgress(payload)
-            ? noteCommentaryProgress(payload)
-            : undefined,
-      })
+    ? trackToolProgressCallback(
+        wrapProgressCallback(params.replyOptions?.onItemEvent, {
+          ...itemEventForwardingOptions,
+          waitForDirectBlockReplyDelivery: true,
+          onForward: (payload) =>
+            preserveProgressCallbackStartOrder && shouldDeliverDurableCommentaryProgress(payload)
+              ? noteCommentaryProgress(payload)
+              : undefined,
+        }),
+      )
     : undefined;
   const canCaptureCliPreambleEvents =
     Boolean(params.replyOptions?.onItemEvent) && shouldBridgeCliPreambleEvents(params.replyOptions);
@@ -382,6 +409,9 @@ export async function prepareDispatchExecution(state: ChooseDispatchRouteReadySt
     shouldForwardProgressCallback,
     preserveProgressCallbackStartOrder,
     wrapProgressCallback,
+    isVisibleToolProgressEcho,
+    onToolStart,
+    onCommandOutput,
     onReasoningStream,
     deliverStandaloneCommentaryProgress,
     canForwardSuppressedSourceItemEvents,

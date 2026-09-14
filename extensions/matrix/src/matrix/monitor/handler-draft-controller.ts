@@ -6,11 +6,18 @@ import type { GetReplyOptions } from "openclaw/plugin-sdk/reply-runtime";
 import type { CoreConfig, MatrixConfig, MatrixStreamingMode, ReplyToMode } from "../../types.js";
 import type { MatrixClient } from "../sdk.js";
 import { formatMatrixToolProgressMarkdownCode } from "./handler-helpers.js";
-import { loadMatrixDraftStream, type MatrixDraftStreamHandle } from "./handler-runtime.js";
+import {
+  loadMatrixDraftStream,
+  loadMatrixSendModule,
+  type MatrixDraftStreamHandle,
+} from "./handler-runtime.js";
+import { createMatrixToolGroups } from "./handler-tool-groups.js";
 import type { BlockReplyContext, ReplyPayload } from "./runtime-api.js";
 
 export async function createMatrixDraftController(params: {
   streaming: MatrixStreamingMode;
+  /** Streaming DMs retain conversation text and group activity independently. */
+  conversationTimeline?: boolean;
   previewToolProgressEnabled: boolean;
   replyToMode: ReplyToMode;
   messageId: string;
@@ -54,6 +61,83 @@ export async function createMatrixDraftController(params: {
         }),
       )
     : undefined;
+  const conversationTimeline = params.conversationTimeline === true && Boolean(draftStream);
+  let presentationTail: Promise<unknown> = Promise.resolve();
+  let timelineFinished = false;
+  const enqueuePresentation = <T>(operation: () => Promise<T>): Promise<T> => {
+    if (!conversationTimeline) {
+      return operation();
+    }
+    const result = presentationTail.then(operation);
+    presentationTail = result.catch(() => undefined);
+    return result;
+  };
+  const { createMatrixDraftStream } = conversationTimeline
+    ? await loadMatrixDraftStream()
+    : { createMatrixDraftStream: undefined };
+  const createQuietStream = () => {
+    if (!createMatrixDraftStream) {
+      throw new Error("Matrix timeline is not enabled");
+    }
+    return createMatrixDraftStream({
+      roomId,
+      client,
+      cfg,
+      mode: "quiet",
+      threadId: threadTarget,
+      replyToId: draftReplyToId,
+      accountId,
+      log: logVerboseMessage,
+    });
+  };
+  const toolGroups = conversationTimeline
+    ? createMatrixToolGroups({ createStream: createQuietStream })
+    : undefined;
+  let statusStream: MatrixDraftStreamHandle | undefined;
+  const closeStatus = async () => {
+    await statusStream?.stop();
+    statusStream = undefined;
+  };
+  const unsettledTextPreviews: Array<{ eventId: string; text: string }> = [];
+  const settleRetainedTextPreviews = async () => {
+    if (!unsettledTextPreviews.length) {
+      return;
+    }
+    const { editMessageMatrix } = await loadMatrixSendModule();
+    for (const preview of unsettledTextPreviews.splice(0)) {
+      try {
+        await editMessageMatrix(roomId, preview.eventId, preview.text, {
+          client,
+          cfg,
+          threadId: threadTarget,
+          accountId,
+          live: false,
+          includeMentions: false,
+        });
+      } catch (error) {
+        // Retain accepted conversation history if transport recovery also fails.
+        logVerboseMessage(
+          `matrix: retained preview ${preview.eventId} could not finalize: ${String(error)}`,
+        );
+      }
+    }
+  };
+  // A pre-tool text preview belongs to that explanation, never to a later answer.
+  const retainTimelineText = async () => {
+    if (!conversationTimeline || !draftStream) {
+      return;
+    }
+    await draftStream.stop();
+    if (!(await draftStream.finalizeLive())) {
+      const eventId = draftStream.eventId();
+      const text = draftStream.text();
+      if (eventId && text) {
+        unsettledTextPreviews.push({ eventId, text });
+      }
+    }
+    draftStream.reset();
+    draftDisposition = "active";
+  };
   const shouldStreamPreviewToolProgress = Boolean(draftStream) && previewToolProgressEnabled;
   const shouldSuppressDefaultToolProgressMessages =
     Boolean(draftStream) && (shouldStreamPreviewToolProgress || params.streaming === "progress");
@@ -84,6 +168,28 @@ export async function createMatrixDraftController(params: {
       if (!draftStream) {
         return false;
       }
+      if (conversationTimeline) {
+        return await enqueuePresentation(async () => {
+          if (timelineFinished) {
+            return false;
+          }
+          await toolGroups?.closeGroup();
+          statusStream ??= createQuietStream();
+          if (statusStream.isStopped()) {
+            return false;
+          }
+          statusStream.update(previewText);
+          // Ungrouped outcomes also use this lane. An old event is not a
+          // receipt for its pending edit; confirm the current text before
+          // the caller may suppress its ordinary summary.
+          await statusStream.flush();
+          return (
+            !statusStream.isStopped() &&
+            Boolean(statusStream.eventId()) &&
+            statusStream.matchesPreparedText(previewText)
+          );
+        });
+      }
       draftStream.update(previewText);
       if (options?.flush) {
         await draftStream.flush();
@@ -91,7 +197,12 @@ export async function createMatrixDraftController(params: {
       // A queued update is not visible until Matrix has accepted a draft event.
       return Boolean(draftStream.eventId());
     },
-    deleteCurrent: () => draftStream?.deleteCurrentMessage(),
+    deleteCurrent: () =>
+      conversationTimeline
+        ? enqueuePresentation(async () => {
+            await statusStream?.deleteCurrentMessage();
+          })
+        : draftStream?.deleteCurrentMessage(),
   });
   const previewLifecycle = createLivePreviewLifecycle<ReplyPayload, string>({
     draft: draftStream
@@ -119,9 +230,32 @@ export async function createMatrixDraftController(params: {
       progressPreambleEnabled: true,
       commentaryProgressEnabled: progressDraft.commentaryProgressEnabled,
       onToolStart: async (payload) => {
+        if (conversationTimeline && shouldStreamPreviewToolProgress) {
+          return await enqueuePresentation(async () => {
+            if (timelineFinished) {
+              return false;
+            }
+            progressDraft.beginNewTurn({ force: true });
+            await closeStatus();
+            await retainTimelineText();
+            return await toolGroups!.pushTool(payload);
+          });
+        }
         return await progressDraft.pushToolEvent(payload);
       },
       onItemEvent: async (payload) => {
+        // The durable commentary pipeline owns preambles; never echo them in a card.
+        if (conversationTimeline) {
+          if (payload.kind === "preamble" || payload.kind === "answer-candidate") {
+            return false;
+          }
+          const accepted = await enqueuePresentation(async () =>
+            timelineFinished ? false : await toolGroups!.pushItem(payload),
+          );
+          if (accepted) {
+            return true;
+          }
+        }
         return await progressDraft.pushItemEvent(payload);
       },
       onPlanUpdate: async (payload) => {
@@ -135,6 +269,20 @@ export async function createMatrixDraftController(params: {
       },
       onApprovalEvent: async (payload) => {
         return await progressDraft.pushApprovalEvent(payload);
+      },
+      onCommandOutput: async (payload) => {
+        if (conversationTimeline) {
+          const accepted = await enqueuePresentation(async () =>
+            timelineFinished ? false : await toolGroups!.pushCommandOutput(payload),
+          );
+          if (accepted) {
+            return true;
+          }
+        }
+        return await progressDraft.pushCommandOutputEvent(payload);
+      },
+      onPatchSummary: async (payload) => {
+        return await progressDraft.pushPatchEvent(payload);
       },
     };
   };
@@ -199,6 +347,10 @@ export async function createMatrixDraftController(params: {
   };
 
   const resetDraftDeliveryState = async () => {
+    await toolGroups?.reset();
+    await closeStatus();
+    await settleRetainedTextPreviews();
+    timelineFinished = false;
     await draftStream?.discardPending();
     draftStream?.reset();
     previewLifecycle.reset();
@@ -239,13 +391,38 @@ export async function createMatrixDraftController(params: {
   return {
     draftStream,
     previewLifecycle,
-    cancelProgressDraft: () => progressDraft.cancel(),
+    conversationTimeline,
+    enqueuePresentation,
+    prepareTimelineDelivery: async (payload: ReplyPayload, kind: string) => {
+      if (!conversationTimeline) {
+        return;
+      }
+      // A retained timeline segment ends a status surface, not the turn.
+      // Reopen its gate so later plans and approvals can still publish.
+      progressDraft.beginNewTurn({ force: true });
+      await toolGroups?.closeGroup();
+      await closeStatus();
+      if (kind === "final" && !payload.isCommentary) {
+        timelineFinished = true;
+        progressDraft.cancel();
+        await toolGroups?.finish();
+      }
+    },
+    cancelProgressDraft: () => {
+      progressDraft.cancel();
+      return enqueuePresentation(async () => {
+        timelineFinished = true;
+        await toolGroups?.finish();
+        await closeStatus();
+        await settleRetainedTextPreviews();
+      });
+    },
     buildPreviewToolProgressReplyOptions,
     queueDraftBlockBoundary,
     advanceDraftBlockBoundary,
     resetDraftBlockOffsets,
     beginAssistantMessage: () => progressDraft.beginAssistantMessage(),
-    resetDraftDeliveryState,
+    resetDraftDeliveryState: () => enqueuePresentation(resetDraftDeliveryState),
     updateDraftFromLatestFullText,
     finalizeAcceptedPartialDraft,
     settleAcceptedDraftAfterError,
@@ -260,16 +437,22 @@ export async function createMatrixDraftController(params: {
     resetReplyToIdForNextBlock: () => {
       currentDraftReplyToId = replyToMode === "all" ? draftReplyToId : undefined;
     },
-    onPartialReply: (text: string) => {
-      if (progressDraftStreaming) {
+    onPartialReply: (text: string) =>
+      enqueuePresentation(async () => {
+        if (progressDraftStreaming || timelineFinished) {
+          return false;
+        }
+        if (conversationTimeline) {
+          progressDraft.beginNewTurn({ force: true });
+          await toolGroups?.closeGroup();
+          await closeStatus();
+        }
+        latestDraftFullText = text;
+        if (text.trim()) {
+          progressDraft.resetActivity({ suppressed: true });
+        }
+        updateDraftFromLatestFullText();
         return false;
-      }
-      latestDraftFullText = text;
-      if (text.trim()) {
-        progressDraft.resetActivity({ suppressed: true });
-      }
-      updateDraftFromLatestFullText();
-      return false;
-    },
+      }),
   };
 }

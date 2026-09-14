@@ -216,8 +216,10 @@ export type GetReplyOptions = {
    */
   suppressToolErrorWarnings?: boolean;
   /**
-   * If true, dispatch skips default tool/progress text messages and expects the
-   * channel to surface progress via its own streaming/edit UX.
+   * Let channel-owned progress replace correlated verbose tool summaries once
+   * its callback explicitly returns true. Missing/declined previews retain the
+   * default delivery; failures require a confirmed failed outcome. Media and
+   * interactive tool results remain durable.
    */
   suppressDefaultToolProgressMessages?: boolean;
   /** Suppress standalone tool/progress text even when verbose progress is enabled. */

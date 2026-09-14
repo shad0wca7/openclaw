@@ -150,6 +150,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                 onPartialReply: deferFinalTtsText
                   ? undefined
                   : wrapProgressCallback(params.replyOptions?.onPartialReply, {
+                      waitForDirectBlockReplyDelivery: true,
                       onVisible: (payload) => {
                         if (hasOutboundReplyContent(payload, { trimText: true })) {
                           didDeliverVisiblePartialReply = true;
@@ -188,17 +189,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                   await params.replyOptions?.onQueuedFollowupSettled?.();
                 },
                 onBlockReplyQueued: wrapProgressCallback(params.replyOptions?.onBlockReplyQueued),
-                onToolStart: wrapProgressCallback(params.replyOptions?.onToolStart, {
-                  allowWhenToolSummariesHidden:
-                    params.replyOptions?.allowToolLifecycleWhenProgressHidden === true,
-                  forwardWhenSourceDeliverySuppressed: true,
-                  requiresToolSummaryVisibility: true,
-                  waitForDirectBlockReplyDelivery: true,
-                  onForward: async () => {
-                    // Commentary precedes the tool that follows it.
-                    await flushPendingCommentaryProgress();
-                  },
-                }),
+                onToolStart: state.onToolStart,
                 onItemEvent: state.onItemEvent,
                 commentaryProgressEnabled:
                   state.deliverStandaloneCommentaryProgress ||
@@ -206,11 +197,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                   params.replyOptions?.commentaryProgressEnabled,
                 reasoningPayloadsEnabled,
                 commentaryPayloadsEnabled,
-                onCommandOutput: wrapProgressCallback(params.replyOptions?.onCommandOutput, {
-                  forwardWhenSourceDeliverySuppressed: true,
-                  requiresToolSummaryVisibility: true,
-                  waitForDirectBlockReplyDelivery: true,
-                }),
+                onCommandOutput: state.onCommandOutput,
                 onCompactionStart: wrapProgressCallback(params.replyOptions?.onCompactionStart, {
                   allowWhenToolSummariesHidden:
                     params.replyOptions?.allowToolLifecycleWhenProgressHidden === true,
@@ -308,6 +295,13 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                       }
                     }
                     if (state.sendPolicyDenied) {
+                      return;
+                    }
+                    if (
+                      !durableToolResult &&
+                      !isFastModeAutoProgress &&
+                      (await state.isVisibleToolProgressEcho(payload))
+                    ) {
                       return;
                     }
                     const bypassToolSummarySuppression =

@@ -232,6 +232,7 @@ describe("followup queue durable input consumption", () => {
             },
             defaults: { typing, typingMode: "never", defaultModel: "gpt-test" },
             onToolResult: async () => {},
+            onCommentaryPayload: async () => {},
             onCompactionNoticePayload: async () => {},
           });
           pendingTotals.push(listSessionPendingInputs(scope()).total);
