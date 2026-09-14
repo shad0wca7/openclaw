@@ -3055,6 +3055,7 @@ describe("matrix monitor handler draft streaming", () => {
   type DeliverFn = (payload: ReplyPayload, info: { kind: string }) => Promise<unknown>;
 
   function createStreamingHarness(opts?: {
+    isDirectMessage?: boolean;
     replyToMode?: "off" | "first" | "all" | "batched";
     threadReplies?: "inbound" | "always";
     blockStreamingEnabled?: boolean;
@@ -3085,6 +3086,10 @@ describe("matrix monitor handler draft streaming", () => {
     const logVerboseMessage = vi.fn();
 
     const { handler } = createMatrixHandlerTestHarness({
+      // These tests protect the room streaming contract; DM timelines are
+      // exercised separately through the real reply-presentation handler.
+      isDirectMessage: opts?.isDirectMessage ?? false,
+      roomsConfig: { "!room:example.org": { requireMention: false } },
       streaming: opts?.streaming ?? "quiet",
       accountConfig: opts?.accountConfig,
       previewToolProgressEnabled: opts?.previewToolProgressEnabled ?? false,
@@ -3550,14 +3555,20 @@ describe("matrix monitor handler draft streaming", () => {
     await finish();
   });
 
-  it.each([undefined, false])(
-    "keeps quiet Matrix status, plans, and approvals without tool failures with toolProgress=%s",
-    async (toolProgress) => {
+  it.each([
+    { toolProgress: undefined, isDirectMessage: false },
+    { toolProgress: false, isDirectMessage: false },
+    { toolProgress: undefined, isDirectMessage: true },
+    { toolProgress: false, isDirectMessage: true },
+  ])(
+    "keeps quiet Matrix status, plans, and approvals with toolProgress=$toolProgress, direct=$isDirectMessage",
+    async ({ toolProgress, isDirectMessage }) => {
       vi.useFakeTimers();
       let finish: (() => Promise<void>) | undefined;
       try {
         const { dispatch } = createStreamingHarness({
           streaming: "progress",
+          isDirectMessage,
           previewToolProgressEnabled: false,
           accountConfig: {
             streaming: { mode: "progress", progress: { label: "Working", toolProgress } },

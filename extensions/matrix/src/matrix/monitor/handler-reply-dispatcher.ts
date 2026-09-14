@@ -104,6 +104,11 @@ export function createMatrixReplyDispatcher(config: {
     ...prefixOptions,
     humanDelay,
     deliver: async (payload: ReplyPayload, info: { kind: "tool" | "block" | "final" }) => {
+      await draftController.prepareTimelineDelivery(payload, info.kind);
+      if (draftController.conversationTimeline && payload.isCommentary) {
+        // Commentary is already complete and must not consume the answer preview.
+        return await deliverPayload(payload);
+      }
       const completeDelivery = async (
         result: MatrixReplyDeliveryResult,
       ): Promise<MatrixReplyDeliveryResult> => {
@@ -292,7 +297,8 @@ export function createMatrixReplyDispatcher(config: {
   } = dispatcherOptions;
 
   return {
-    deliverReply,
+    deliverReply: (payload: ReplyPayload, info: { kind: string }) =>
+      draftController.enqueuePresentation(() => deliverReply(payload, info)),
     onReplyError,
     turnDispatcherOptions,
     nonFinalReplyDeliveryFailed: () => nonFinalReplyDeliveryFailed,

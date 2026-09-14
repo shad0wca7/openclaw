@@ -23,7 +23,13 @@ vi.mock("../../config/sessions/session-accessor.js", async () => {
 
 const { executeFollowupTurn } = await import("./followup-turn-execution.js");
 
-export const executeFollowupTurnForTest = executeFollowupTurn;
+type FollowupExecutionParams = Parameters<typeof executeFollowupTurn>[0];
+export function executeFollowupTurnForTest(
+  params: Omit<FollowupExecutionParams, "onCommentaryPayload"> &
+    Partial<Pick<FollowupExecutionParams, "onCommentaryPayload">>,
+) {
+  return executeFollowupTurn({ onCommentaryPayload: async () => {}, ...params });
+}
 
 export function getFollowupTurnTestState() {
   return followupTurnTestState;

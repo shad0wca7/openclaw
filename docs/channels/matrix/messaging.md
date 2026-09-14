@@ -81,6 +81,14 @@ The full config accepts `{ mode, chunkMode, block, preview, progress }`:
 | `"partial"` / `"quiet"` | Live draft for the current block, completed blocks kept as messages | Live draft for the current block, finalized in place |
 | `"off"`                 | One notifying Matrix message per finished block                     | One notifying Matrix message for the full reply      |
 
+### Direct-message timeline
+
+Direct messages retain completed assistant commentary as ordinary messages, including the opening acknowledgement and later explanations. Streaming keeps that conversation text separate from activity previews and the final answer.
+
+When tool-progress previews are enabled, consecutive calls of the same tool share a quiet activity message, such as `Bash × 3 · 2 done · 1 running`. This applies to all tool types. A different tool, commentary, or status message starts a new group. Lifecycle updates count each tool call once; failures remain visible in the totals. Rapid edits use the normal preview throttle.
+
+The final answer uses its own message after the preceding commentary and activity; it never replaces the acknowledgement or a tool group. Normal delivery remains the fallback when an activity preview cannot be confirmed. Room conversations retain the streaming behavior described above.
+
 Notes:
 
 - If a preview grows past Matrix's per-event size limit, OpenClaw stops preview streaming and falls back to final-only delivery.

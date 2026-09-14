@@ -118,6 +118,15 @@ export function createAgentRunEventHandler(params: {
           detailMode: params.turn.toolProgressDetail,
         });
         await Promise.all([params.turn.typingSignals.signalToolStart(), toolStartProgressPromise]);
+      } else if (phase === "result") {
+        await params.turn.opts?.onItemEvent?.({
+          itemId: readStringValue(evt.data.itemId) ?? toolCallId,
+          toolCallId,
+          kind: "tool",
+          name,
+          phase: "end",
+          status: evt.data.isError === true ? "failed" : "completed",
+        });
       }
       const commandOutput = buildCommandOutputFromToolResultEvent(evt);
       if (commandOutput) {

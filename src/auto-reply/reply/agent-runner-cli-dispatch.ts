@@ -141,6 +141,7 @@ function createReasoningProgressBridge(params: {
 type CommentaryTextPayload = {
   text: string;
   itemId?: string;
+  phase?: string;
 };
 
 function readCommentaryTextPayload(evt: AgentEventPayload): CommentaryTextPayload | undefined {
@@ -154,6 +155,7 @@ function readCommentaryTextPayload(evt: AgentEventPayload): CommentaryTextPayloa
   return {
     text,
     ...(typeof evt.data.itemId === "string" ? { itemId: evt.data.itemId } : {}),
+    ...(typeof evt.data.phase === "string" ? { phase: evt.data.phase } : {}),
   };
 }
 
@@ -247,7 +249,11 @@ export function createCliToolSummaryTracker(params: {
   commandDetailsVisible: boolean;
   shouldEmitToolResult: () => boolean;
   shouldEmitToolOutput: () => boolean;
-  deliver: (payload: { text: string; isError?: boolean }) => Promise<void> | void;
+  deliver: (payload: {
+    text: string;
+    isError?: boolean;
+    channelData?: { openclawToolProgressId: string };
+  }) => Promise<void> | void;
 }) {
   const toolByCallId = new Map<string, { name: string; meta?: string; commandBearing: boolean }>();
   return {
@@ -296,7 +302,13 @@ export function createCliToolSummaryTracker(params: {
       if (!text.trim()) {
         return storedTool?.commandBearing === true;
       }
-      await params.deliver({ text, ...(payload.isError === true ? { isError: true } : {}) });
+      await params.deliver({
+        text,
+        ...(payload.toolCallId
+          ? { channelData: { openclawToolProgressId: payload.toolCallId } }
+          : {}),
+        ...(payload.isError === true ? { isError: true } : {}),
+      });
       return storedTool?.commandBearing === true;
     },
   };

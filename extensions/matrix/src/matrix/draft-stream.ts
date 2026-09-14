@@ -229,6 +229,8 @@ export function createMatrixDraftStream(params: {
     finalizeLive,
     reset,
     eventId: () => currentEventId,
+    text: () => lastSentText || undefined,
+    isStopped: () => streamState.stopped,
     content: () => lastSentContent || undefined,
     matchesPreparedText: (text: string) =>
       prepareMatrixSingleText(text.trimEnd(), {

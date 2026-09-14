@@ -19,6 +19,7 @@ import { recordReplyOperationAgentTurn } from "./reply-operation-run-state.js";
 import { hasReplyOperationExecutionStarted } from "./reply-run-registry.js";
 import { prepareReplyToolAuthority } from "./reply-tool-authority.js";
 import { resolveSourceReplyExpectation } from "./source-reply-delivery-mode.js";
+import { createToolProgressEchoTracker } from "./tool-progress-echo.js";
 import { createTypingSignaler, type TypingSignaler } from "./typing-mode.js";
 
 export type FollowupExecutionResult = {
@@ -75,6 +76,7 @@ export async function executeFollowupTurn(params: {
   turn: AdmittedFollowupTurn;
   defaults: FollowupRunnerParams;
   onToolResult: (payload: ReplyPayload, execution: { runId: string }) => Promise<void>;
+  onCommentaryPayload: (payload: ReplyPayload, execution: { runId: string }) => Promise<void>;
   onCompactionNoticePayload: (payload: ReplyPayload, execution: { runId: string }) => Promise<void>;
 }): Promise<FollowupExecutionResult> {
   const { turn, defaults } = params;
@@ -91,6 +93,12 @@ export async function executeFollowupTurn(params: {
   turn.queued.run.terminalReplyExpectation = terminalReplyExpectation;
   // Heartbeats can refresh a drain callback but never enter its queue.
   const isHeartbeat = false;
+  const { trackToolProgressCallback, isVisibleToolProgressEcho } = createToolProgressEchoTracker(
+    sourceOpts?.suppressDefaultToolProgressMessages === true,
+  );
+  // Capture raw acceptance before the queued visibility adapter applies its
+  // legacy void-as-visible contract. Echo suppression requires explicit true.
+  const onItemEvent = trackToolProgressCallback(sourceOpts?.onItemEvent);
   const roomEvent = turn.queued.currentInboundEventKind === "room_event";
   const progressAllowed = () => turn.sendPolicy === "allow" && !roomEvent;
   const currentVerboseLevel = (): VerboseLevel => {
@@ -146,6 +154,36 @@ export async function executeFollowupTurn(params: {
       options: sourceOpts,
       resolveVerboseProgressVisibility: () => progressAllowed() && shouldEmitVerboseToolResult(),
     });
+  const completedCommentary = new Map<string, string>();
+  const deliverCompletedCommentary = async (
+    item: Parameters<NonNullable<InternalGetReplyOptions["onItemEvent"]>>[0],
+  ): Promise<boolean> => {
+    if (
+      !commentaryPayloadsEnabled ||
+      !progressAllowed() ||
+      (turn.queued.run.sourceReplyDeliveryMode ?? sourceOpts?.sourceReplyDeliveryMode) ===
+        "message_tool_only" ||
+      item.kind !== "preamble" ||
+      item.phase !== "end" ||
+      item.suppressDurableProgress === true
+    ) {
+      return false;
+    }
+    const text = item.progressText?.trim();
+    if (!text) {
+      return false;
+    }
+    if (item.itemId && completedCommentary.get(item.itemId) === text) {
+      return true;
+    }
+    // Native providers complete authored preambles independently of tool
+    // verbosity. Join the block delivery before the next queued activity.
+    await params.onCommentaryPayload({ text, isCommentary: true }, { runId: turn.runId });
+    if (item.itemId) {
+      completedCommentary.set(item.itemId, text);
+    }
+    return true;
+  };
   let progressChain: Promise<void> = Promise.resolve();
   let visibleReplyDelivered = false;
   let pendingProgressTaskFailure: unknown;
@@ -227,24 +265,31 @@ export async function executeFollowupTurn(params: {
     onPreparedBlockReply: undefined,
     onPartialReply: undefined,
     onAssistantMessageStart: undefined,
-    onToolStart: wrapVisibility(sourceOpts?.onToolStart, shouldEmitToolLifecycle),
-    onCommandOutput: wrapVisibility(sourceOpts?.onCommandOutput, shouldEmitStructuredProgress),
-    onItemEvent: sourceOpts?.onItemEvent
-      ? (item) =>
-          enqueueProgressResult(async () => {
-            // Only an explicit draft-vs-durable owner contract may bypass hidden
-            // tool-progress filtering for queued preambles.
-            const draftOwnsPreamble =
-              progressAllowed() && item.kind === "preamble" && draftOwnsCommentaryProgress;
-            if (!draftOwnsPreamble && !shouldEmitStructuredProgress()) {
-              return false;
-            }
-            const visible = (
-              await settleProgressVisibilityCallbackResult(sourceOpts.onItemEvent!(item))
-            ).visible;
-            return visible;
-          })
-      : undefined,
+    onToolStart: wrapVisibility(
+      trackToolProgressCallback(sourceOpts?.onToolStart),
+      shouldEmitToolLifecycle,
+    ),
+    onCommandOutput: wrapVisibility(
+      trackToolProgressCallback(sourceOpts?.onCommandOutput),
+      shouldEmitStructuredProgress,
+    ),
+    onItemEvent:
+      onItemEvent || commentaryPayloadsEnabled
+        ? (item) =>
+            enqueueProgressResult(async () => {
+              const commentaryVisible = await deliverCompletedCommentary(item);
+              // Only an explicit draft-vs-durable owner contract may bypass hidden
+              // tool-progress filtering for queued preambles.
+              const draftOwnsPreamble =
+                progressAllowed() && item.kind === "preamble" && draftOwnsCommentaryProgress;
+              if (!onItemEvent || (!draftOwnsPreamble && !shouldEmitStructuredProgress())) {
+                return commentaryVisible;
+              }
+              const visible = (await settleProgressVisibilityCallbackResult(onItemEvent(item)))
+                .visible;
+              return commentaryVisible || visible;
+            })
+        : undefined,
     onNarrationUpdate: wrap(sourceOpts?.onNarrationUpdate),
     onPlanUpdate: wrapVisibility(sourceOpts?.onPlanUpdate),
     onApprovalEvent: wrapVisibility(sourceOpts?.onApprovalEvent, shouldEmitStructuredProgress),
@@ -313,6 +358,9 @@ export async function executeFollowupTurn(params: {
             return false;
           }
           await params.onToolResult(payload, { runId: turn.runId });
+          return true;
+        }
+        if (!requiresDurableToolResult && (await isVisibleToolProgressEcho(payload))) {
           return true;
         }
         const verboseToolResult = !requiresDurableToolResult && shouldEmitVerboseToolResult();

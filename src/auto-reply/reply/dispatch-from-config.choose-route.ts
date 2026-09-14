@@ -48,6 +48,7 @@ import {
   mirrorTranscriptAfterDispatcherSettled,
   transcriptMirrorForDeliveredPayload,
 } from "./dispatch-from-config.transcript.js";
+import { requireQueuedReplyDelivery } from "./dispatch-from-config.turn-ledger.js";
 import type { NormalizeReplySkipReason } from "./normalize-reply.js";
 import {
   resolveRoutedReplyDeliveryOutcome,
@@ -128,16 +129,21 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
     }
     return !requiresDurableToolResultDelivery(payload);
   };
-  // Durable inter-tool commentary lane: with verbose progress on, preamble
-  // items become standalone progress messages like tool summaries. The latest
+  // Authored commentary is independent of tool verbosity when the channel
+  // opts into durable commentary. Legacy verbose lanes keep tool summaries. The latest
   // text per item id is buffered (snapshot producers re-emit the same item)
   // and flushed when the producer moves on, always before the final reply.
   let pendingCommentaryProgress: { itemId?: string; text: string } | null = null;
   const deliverCommentaryProgressMessage = async (text: string) => {
-    if (!shouldSendToolSummaries() || shouldSuppressProgressDelivery()) {
+    if (
+      (!state.commentaryPayloadsEnabled && !shouldSendToolSummaries()) ||
+      shouldSuppressProgressDelivery()
+    ) {
       return;
     }
-    const payload: ReplyPayload = { text: `💬 ${text}` };
+    const payload: ReplyPayload = state.commentaryPayloadsEnabled
+      ? { text, isCommentary: true }
+      : { text: `💬 ${text}` };
     if (shouldSuppressLateTextOnlyToolProgress(payload)) {
       return;
     }
@@ -145,7 +151,19 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
       await sendPayloadAsync(payload, undefined, false);
     } else {
       markInboundDedupeReplayUnsafe();
-      turnLedger.sendQueued("tool", payload);
+      // Join actual delivery before direct activity callbacks can overtake it.
+      const delivery = payload.isCommentary
+        ? sendTrackedBlockReply(payload)
+        : turnLedger.sendQueued("tool", payload);
+      try {
+        await requireQueuedReplyDelivery({
+          delivery,
+          dispatcher,
+          abortSignal: state.getDispatchAbortOperation()?.abortSignal,
+        });
+      } catch (error) {
+        logVerbose(`commentary delivery failed: ${formatErrorMessage(error)}`);
+      }
     }
   };
   const flushPendingCommentaryProgress = async () => {
@@ -157,9 +175,17 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
     }
     await deliverCommentaryProgressMessage(text);
   };
-  const noteCommentaryProgress = async (payload: { itemId?: string; progressText?: string }) => {
+  const completedCommentary = new Map<string, string>();
+  const noteCommentaryProgress = async (payload: {
+    itemId?: string;
+    progressText?: string;
+    phase?: string;
+  }) => {
     const itemId = payload.itemId?.trim() || undefined;
     const text = payload.progressText ?? "";
+    if (itemId && completedCommentary.get(itemId) === text.trim()) {
+      return;
+    }
     const repeatsBufferedText =
       pendingCommentaryProgress !== null && pendingCommentaryProgress.text.trim() === text.trim();
     const updatesBufferedItem =
@@ -179,6 +205,12 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
       await flushPendingCommentaryProgress();
     }
     pendingCommentaryProgress = { itemId, text };
+    if (state.commentaryPayloadsEnabled && payload.phase === "end") {
+      await flushPendingCommentaryProgress();
+      if (itemId) {
+        completedCommentary.set(itemId, text.trim());
+      }
+    }
   };
   const shouldSuppressMessageToolOnlyTextErrorProgress = (payload: ReplyPayload) => {
     if (
