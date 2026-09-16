@@ -73,7 +73,7 @@ export function createMatrixReplyDispatcher(config: {
   } = config;
   const quietDraftStreaming = streaming === "quiet" || streaming === "progress";
   // Tool, block, and final payloads are delivered separately but share one first-reply slot.
-  const hasRepliedRef = { value: false };
+  const { hasRepliedRef } = draftController;
   const deliverPayload = (reply: ReplyPayload) =>
     deliverMatrixReplies({
       cfg,
@@ -104,6 +104,23 @@ export function createMatrixReplyDispatcher(config: {
     ...prefixOptions,
     humanDelay,
     deliver: async (payload: ReplyPayload, info: { kind: "tool" | "block" | "final" }) => {
+      const summaryId = payload.channelData?.openclawToolProgressId;
+      if (
+        info.kind === "tool" &&
+        typeof summaryId === "string" &&
+        !payload.isError &&
+        Object.keys(payload.channelData!).length === 1 &&
+        Object.keys(payload).every((key) =>
+          ["text", "channelData", "isError", "replyToId", "replyToTag", "replyToCurrent"].includes(
+            key,
+          ),
+        ) &&
+        draftController.hasVisibleTool(summaryId)
+      ) {
+        // Only a status-only echo of this exact visible counter can disappear.
+        // Output, errors, media and structured controls keep their normal lane.
+        return mergeMatrixReplyDeliveryResults([]);
+      }
       await draftController.prepareTimelineDelivery(payload, info.kind);
       if (draftController.conversationTimeline && payload.isCommentary) {
         // Commentary is already complete and must not consume the answer preview.

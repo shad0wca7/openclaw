@@ -59,6 +59,29 @@ describe("CodexAppServerEventProjector verbose output and hook projection", () =
     });
   });
 
+  it("keeps failed native summaries out of channel activity deduplication", async () => {
+    const onToolResult = vi.fn();
+    const projector = await createProjector({
+      ...(await createParams()),
+      messageChannel: "matrix",
+      verboseLevel: "on",
+      onToolResult,
+    });
+    await projector.handleNotification(
+      forCurrentTurn("item/completed", {
+        item: {
+          type: "commandExecution",
+          id: "failed-command",
+          command: "false",
+          cwd: "/workspace",
+          status: "failed",
+          exitCode: 1,
+        },
+      }),
+    );
+    expect(onToolResult).toHaveBeenCalledExactlyOnceWith({ text: "🛠️ Bash", isError: true });
+  });
+
   it("can emit raw verbose tool summaries through onToolResult", async () => {
     const onToolResult = vi.fn();
     const projector = await createProjector({
@@ -166,6 +189,7 @@ describe("CodexAppServerEventProjector verbose output and hook projection", () =
     const projector = await createProjector({
       ...(await createParams()),
       verboseLevel: "full",
+      messageChannel: "matrix",
       onToolResult,
     });
 
@@ -184,6 +208,7 @@ describe("CodexAppServerEventProjector verbose output and hook projection", () =
     expect(onToolResult).toHaveBeenCalledTimes(2);
     expect(onToolResult).toHaveBeenNthCalledWith(1, {
       text: "📖 Read: `from README.md`",
+      channelData: { openclawToolProgressId: "tool-1" },
     });
     expect(onToolResult).toHaveBeenNthCalledWith(2, {
       text: "📖 Read\n```txt\nfile contents\n```",
@@ -195,6 +220,7 @@ describe("CodexAppServerEventProjector verbose output and hook projection", () =
     const projector = await createProjector({
       ...(await createParams()),
       verboseLevel: "full",
+      messageChannel: "matrix",
       onToolResult,
     });
 
@@ -246,6 +272,7 @@ describe("CodexAppServerEventProjector verbose output and hook projection", () =
     const projector = await createProjector({
       ...(await createParams()),
       verboseLevel: "full",
+      messageChannel: "matrix",
       onToolResult,
     });
 
@@ -280,6 +307,11 @@ describe("CodexAppServerEventProjector verbose output and hook projection", () =
       text?: string;
     };
     expect(truncatedOutput.text).toContain("...(truncated)...");
+    for (const [payload] of onToolResult.mock.calls) {
+      if (payload.text.includes("```")) {
+        expect(payload).not.toHaveProperty("channelData.openclawToolProgressId");
+      }
+    }
     expect(JSON.stringify(onToolResult.mock.calls)).not.toContain(
       "final output should not duplicate",
     );

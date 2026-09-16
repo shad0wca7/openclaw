@@ -332,6 +332,8 @@ export class CodexToolProgressProjection {
     this.emitToolResultMessage({
       itemId: item.id,
       text: formatToolSummary(toolName, meta),
+      summary: true,
+      isError: isNonSuccessItemStatus(itemStatus(item)),
     });
   }
 
@@ -445,6 +447,7 @@ export class CodexToolProgressProjection {
     itemId: string;
     text: string;
     finalOutput?: boolean;
+    summary?: boolean;
     isError?: boolean;
   }): void {
     const rawText = params.text.trim();
@@ -460,9 +463,11 @@ export class CodexToolProgressProjection {
       void Promise.resolve(
         this.params.onToolResult?.({
           text,
-          ...((this.params.messageChannel || this.params.messageProvider) && {
-            channelData: { openclawToolProgressId: `tool:${params.itemId}` },
-          }),
+          ...(params.summary &&
+            !params.isError &&
+            (this.params.messageChannel || this.params.messageProvider) && {
+              channelData: { openclawToolProgressId: `tool:${params.itemId}` },
+            }),
           ...(params.isError === true ? { isError: true } : {}),
         }),
       ).catch(() => {});
@@ -513,6 +518,7 @@ export class CodexToolProgressProjection {
     this.emitToolResultMessage({
       itemId: params.id,
       text: formatToolSummary(params.name, meta),
+      summary: true,
     });
   }
 

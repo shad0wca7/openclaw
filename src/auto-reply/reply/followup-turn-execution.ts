@@ -19,7 +19,6 @@ import { recordReplyOperationAgentTurn } from "./reply-operation-run-state.js";
 import { hasReplyOperationExecutionStarted } from "./reply-run-registry.js";
 import { prepareReplyToolAuthority } from "./reply-tool-authority.js";
 import { resolveSourceReplyExpectation } from "./source-reply-delivery-mode.js";
-import { createToolProgressEchoTracker } from "./tool-progress-echo.js";
 import { createTypingSignaler, type TypingSignaler } from "./typing-mode.js";
 
 export type FollowupExecutionResult = {
@@ -93,12 +92,6 @@ export async function executeFollowupTurn(params: {
   turn.queued.run.terminalReplyExpectation = terminalReplyExpectation;
   // Heartbeats can refresh a drain callback but never enter its queue.
   const isHeartbeat = false;
-  const { trackToolProgressCallback, isVisibleToolProgressEcho } = createToolProgressEchoTracker(
-    sourceOpts?.suppressDefaultToolProgressMessages === true,
-  );
-  // Capture raw acceptance before the queued visibility adapter applies its
-  // legacy void-as-visible contract. Echo suppression requires explicit true.
-  const onItemEvent = trackToolProgressCallback(sourceOpts?.onItemEvent);
   const roomEvent = turn.queued.currentInboundEventKind === "room_event";
   const progressAllowed = () => turn.sendPolicy === "allow" && !roomEvent;
   const currentVerboseLevel = (): VerboseLevel => {
@@ -265,16 +258,10 @@ export async function executeFollowupTurn(params: {
     onPreparedBlockReply: undefined,
     onPartialReply: undefined,
     onAssistantMessageStart: undefined,
-    onToolStart: wrapVisibility(
-      trackToolProgressCallback(sourceOpts?.onToolStart),
-      shouldEmitToolLifecycle,
-    ),
-    onCommandOutput: wrapVisibility(
-      trackToolProgressCallback(sourceOpts?.onCommandOutput),
-      shouldEmitStructuredProgress,
-    ),
+    onToolStart: wrapVisibility(sourceOpts?.onToolStart, shouldEmitToolLifecycle),
+    onCommandOutput: wrapVisibility(sourceOpts?.onCommandOutput, shouldEmitStructuredProgress),
     onItemEvent:
-      onItemEvent || commentaryPayloadsEnabled
+      sourceOpts?.onItemEvent || commentaryPayloadsEnabled
         ? (item) =>
             enqueueProgressResult(async () => {
               const commentaryVisible = await deliverCompletedCommentary(item);
@@ -282,11 +269,15 @@ export async function executeFollowupTurn(params: {
               // tool-progress filtering for queued preambles.
               const draftOwnsPreamble =
                 progressAllowed() && item.kind === "preamble" && draftOwnsCommentaryProgress;
-              if (!onItemEvent || (!draftOwnsPreamble && !shouldEmitStructuredProgress())) {
+              if (
+                !sourceOpts?.onItemEvent ||
+                (!draftOwnsPreamble && !shouldEmitStructuredProgress())
+              ) {
                 return commentaryVisible;
               }
-              const visible = (await settleProgressVisibilityCallbackResult(onItemEvent(item)))
-                .visible;
+              const visible = (
+                await settleProgressVisibilityCallbackResult(sourceOpts.onItemEvent(item))
+              ).visible;
               return commentaryVisible || visible;
             })
         : undefined,
@@ -358,9 +349,6 @@ export async function executeFollowupTurn(params: {
             return false;
           }
           await params.onToolResult(payload, { runId: turn.runId });
-          return true;
-        }
-        if (!requiresDurableToolResult && (await isVisibleToolProgressEcho(payload))) {
           return true;
         }
         const verboseToolResult = !requiresDurableToolResult && shouldEmitVerboseToolResult();

@@ -384,7 +384,7 @@ describe("matrix monitor handler reply presentation", () => {
     await controller.draftStream?.stop();
   });
 
-  it.each(["partial", "quiet", "progress"] as const)(
+  it.each(["partial", "quiet"] as const)(
     "keeps DM acknowledgement, grouped tools, commentary and final in %s timeline order",
     async (mode) => {
       const events: Array<{ id: string; text: string }> = [];
@@ -415,6 +415,7 @@ describe("matrix monitor handler reply presentation", () => {
       const { handler } = createMatrixHandlerTestHarness({
         isDirectMessage: true,
         streaming: mode,
+        blockStreamingEnabled: true,
         accountConfig: { streaming: { mode, progress: { toolProgress: true } } },
         previewToolProgressEnabled: true,
         createReplyDispatcherWithTyping: (params) => {
@@ -471,6 +472,186 @@ describe("matrix monitor handler reply presentation", () => {
         "The cause is confirmed.",
         "Here is the result.",
       ]);
+    },
+  );
+
+  it("groups native item-only calls without letting late updates split the answer", async () => {
+    const controller = await createMatrixDraftController({
+      cfg: {},
+      client: {} as MatrixClient,
+      roomId: "!room:example.org",
+      accountId: "default",
+      streaming: "quiet",
+      replyToMode: "off",
+      messageId: "$inbound",
+      logVerboseMessage: vi.fn(),
+      conversationTimeline: true,
+      previewToolProgressEnabled: true,
+    });
+    const options = controller.buildPreviewToolProgressReplyOptions();
+    try {
+      for (const itemId of ["collab-one", "collab-two"]) {
+        await options.onItemEvent?.({
+          kind: "tool",
+          name: "subagents",
+          itemId,
+          phase: "start",
+          status: "running",
+        });
+        await options.onItemEvent?.({
+          kind: "tool",
+          name: "subagents",
+          itemId,
+          phase: "end",
+          status: "completed",
+        });
+      }
+      expect(editMessageMatrixMock.mock.calls.at(-1)?.[2]).toContain("× 2 · 2 done");
+      await controller.onPartialReply("Answer");
+      await controller.draftStream?.flush();
+      const answerId = controller.draftStream?.eventId();
+      await options.onToolStart?.({ name: "subagents", itemId: "collab-one", phase: "update" });
+      await controller.onPartialReply("Answer complete");
+      await controller.draftStream?.flush();
+      expect(controller.draftStream?.eventId()).toBe(answerId);
+      expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(2);
+    } finally {
+      await controller.draftStream?.discardPending();
+      await controller.cancelProgressDraft();
+    }
+  });
+
+  it.each(["first", "all", "off"] as const)(
+    "shares the %s reply slot across activity and answer drafts",
+    async (replyToMode) => {
+      const controller = await createMatrixDraftController({
+        cfg: {},
+        client: {} as MatrixClient,
+        roomId: "!room:example.org",
+        accountId: "default",
+        streaming: "quiet",
+        replyToMode,
+        messageId: "$inbound",
+        logVerboseMessage: vi.fn(),
+        conversationTimeline: true,
+        previewToolProgressEnabled: true,
+      });
+      const options = controller.buildPreviewToolProgressReplyOptions();
+      try {
+        await options.onToolStart?.({ name: "bash", toolCallId: "one", phase: "start" });
+        await options.onToolStart?.({ name: "read", toolCallId: "two", phase: "start" });
+        await controller.onPartialReply("Final answer");
+        await controller.draftStream?.flush();
+        expect(
+          sendSingleTextMessageMatrixMock.mock.calls.map(
+            (call) => (call[2] as { replyToId?: string }).replyToId,
+          ),
+        ).toEqual(
+          replyToMode === "all"
+            ? ["$inbound", "$inbound", "$inbound"]
+            : replyToMode === "first"
+              ? ["$inbound", undefined, undefined]
+              : [undefined, undefined, undefined],
+        );
+        expect(controller.currentReplyToId()).toBe(replyToMode === "all" ? "$inbound" : undefined);
+      } finally {
+        await controller.draftStream?.discardPending();
+        await controller.cancelProgressDraft();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "only hides an exact visible status echo (edit fails: %s)",
+    async (editFails) => {
+      const context = {
+        cfg: {},
+        client: {} as MatrixClient,
+        roomId: "!room:example.org",
+        accountId: "default",
+        streaming: "quiet" as const,
+        replyToMode: "off" as const,
+        logVerboseMessage: vi.fn(),
+      };
+      const controller = await createMatrixDraftController({
+        ...context,
+        messageId: "$inbound",
+        conversationTimeline: true,
+        previewToolProgressEnabled: true,
+      });
+      const options = controller.buildPreviewToolProgressReplyOptions();
+      const typingCallbacks = createTypingCallbacks({
+        start: async () => {},
+        onStartError: vi.fn(),
+      });
+      const { deliverReply } = createMatrixReplyDispatcher({
+        ...context,
+        draftStream: controller.draftStream,
+        draftController: controller,
+        prefixOptions: { responsePrefixContextProvider: () => ({}) },
+        humanDelay: undefined,
+        typingCallbacks,
+        runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+        mediaLocalRoots: [],
+      });
+      const channelData = { openclawToolProgressId: "one" };
+      try {
+        await options.onToolStart?.({ name: "bash", toolCallId: "one", phase: "start" });
+        if (editFails) {
+          editMessageMatrixMock.mockRejectedValueOnce(new Error("offline"));
+        }
+        await options.onCommandOutput?.({ toolCallId: "one", phase: "end", exitCode: 0 });
+        await deliverReply({ text: "Bash completed", channelData }, { kind: "tool" });
+        expect(deliverMatrixRepliesMock).toHaveBeenCalledTimes(editFails ? 1 : 0);
+        const distinct: ReplyPayload[] = [
+          { text: "full command output" },
+          { text: "failure details", isError: true, channelData },
+          { mediaUrl: "https://example.org/image.png", channelData },
+          {
+            text: "controls",
+            presentation: { blocks: [{ type: "text", text: "Details" }] },
+            channelData,
+          },
+          { text: "unknown ID", channelData: { openclawToolProgressId: "other" } },
+        ];
+        for (const payload of distinct) {
+          await deliverReply(payload, { kind: "tool" });
+        }
+        expect(
+          deliverMatrixRepliesMock.mock.calls
+            .slice(editFails ? 1 : 0)
+            .map((call) => call[0].replies[0]),
+        ).toEqual(distinct);
+      } finally {
+        await controller.cancelProgressDraft();
+        typingCallbacks.onCleanup?.();
+      }
+    },
+  );
+
+  it.each(["off", "partial", "quiet", "progress"] as const)(
+    "respects completed-block opt-in for DM commentary in %s mode",
+    async (streaming) => {
+      for (const blockStreamingEnabled of [false, true]) {
+        let commentaryEnabled: unknown;
+        const { handler } = createMatrixHandlerTestHarness({
+          isDirectMessage: true,
+          streaming,
+          blockStreamingEnabled,
+          dispatchInboundMessage: async ({ replyOptions }) => {
+            commentaryEnabled = replyOptions?.commentaryPayloadsEnabled;
+            return { queuedFinal: false, counts: { final: 0, block: 0, tool: 0 } };
+          },
+        });
+        await handler(
+          "!room:example.org",
+          createMatrixTextMessageEvent({
+            eventId: `$opt-in-${blockStreamingEnabled}`,
+            body: "check",
+          }),
+        );
+        expect(commentaryEnabled).toBe(blockStreamingEnabled);
+      }
     },
   );
 });

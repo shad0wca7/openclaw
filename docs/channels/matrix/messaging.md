@@ -83,9 +83,9 @@ The full config accepts `{ mode, chunkMode, block, preview, progress }`:
 
 ### Direct-message timeline
 
-Direct messages retain completed assistant commentary as ordinary messages, including the opening acknowledgement and later explanations. Streaming keeps that conversation text separate from activity previews and the final answer.
+With `streaming.block.enabled: true`, direct messages retain completed assistant commentary, including the opening acknowledgement and later explanations. In `partial` or `quiet` mode, conversation text, activity previews and the final answer use separate messages. This uses the existing account/channel streaming settings; there is no new per-DM mode. With blocks disabled, the behavior in the table above is unchanged.
 
-When tool-progress previews are enabled, consecutive calls of the same tool share a quiet activity message, such as `Bash × 3 · 2 done · 1 running`. This applies to all tool types. A different tool, commentary, or status message starts a new group. Lifecycle updates count each tool call once; failures remain visible in the totals. Rapid edits use the normal preview throttle.
+In that timeline, when tool-progress previews are enabled, consecutive calls of the same tool share a quiet activity message, such as `Bash × 3 · 2 done · 1 running`. A different tool, commentary, or status message starts a new group. Lifecycle updates count each identified tool call once; failures remain visible in the totals. Labels use the existing tool-detail and command-text policies. Full diagnostic output, errors, media and controls keep their normal delivery; only already-visible status summaries are omitted. Rapid edits use the normal preview throttle.
 
 The final answer uses its own message after the preceding commentary and activity; it never replaces the acknowledgement or a tool group. Normal delivery remains the fallback when an activity preview cannot be confirmed. Room conversations retain the streaming behavior described above.
 

@@ -495,13 +495,15 @@ export class CodexAppServerEventProjector extends CodexTurnProjection {
     if (this.projectionClosed) {
       return;
     }
+    // A completion-only notification owns its terminal summary before transcript
+    // call backfill can emit a status-less duplicate.
+    this.toolProgressProjection.emitToolResultSummary(item);
     this.toolTranscriptProjection.recordNativeToolCall(item);
     const details = await this.toolTranscriptProjection.prepareNativeToolResultDetails(item);
     if (this.projectionClosed) {
       return;
     }
     this.toolTranscriptProjection.recordNativeToolResult(item, details);
-    this.toolProgressProjection.emitToolResultSummary(item);
     this.toolProgressProjection.emitToolResultOutput(item);
     this.emitAgentEvent({
       stream: "codex_app_server.item",
@@ -594,6 +596,7 @@ export class CodexAppServerEventProjector extends CodexTurnProjection {
       if (this.projectionClosed) {
         return;
       }
+      this.toolProgressProjection.emitToolResultSummary(item);
       this.toolTranscriptProjection.recordNativeToolCall(item);
       const details = await this.toolTranscriptProjection.prepareNativeToolResultDetails(item);
       if (this.projectionClosed) {
@@ -601,7 +604,6 @@ export class CodexAppServerEventProjector extends CodexTurnProjection {
       }
       this.toolTranscriptProjection.recordNativeToolResult(item, details);
       this.toolTranscriptProjection.emitAfterToolCallObservation(item);
-      this.toolProgressProjection.emitToolResultSummary(item);
       this.toolProgressProjection.emitToolResultOutput(item);
     }
     this.toolProgressProjection.approvalTimeoutKinds.clear();
