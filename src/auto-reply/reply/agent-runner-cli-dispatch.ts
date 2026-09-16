@@ -304,7 +304,8 @@ export function createCliToolSummaryTracker(params: {
       }
       await params.deliver({
         text,
-        ...(payload.toolCallId
+        // Only status summaries may be replaced by channel-owned activity.
+        ...(payload.toolCallId && text === aggregate && payload.isError !== true
           ? { channelData: { openclawToolProgressId: payload.toolCallId } }
           : {}),
         ...(payload.isError === true ? { isError: true } : {}),

@@ -131,162 +131,37 @@ describe("executeFollowupTurn progress ownership", () => {
     },
   );
 
-  it.each([
-    { source: "tool", accepted: true, suppressed: true },
-    { source: "tool", accepted: false, suppressed: false },
-    { source: "tool", accepted: undefined, suppressed: false },
-    { source: "item", accepted: true, suppressed: true },
-    { source: "item", accepted: undefined, suppressed: false },
-    { source: "command", accepted: true, suppressed: true },
-    { source: "command", accepted: undefined, suppressed: false },
-  ] as const)(
-    "dedupes queued correlated $source summaries only after explicit acceptance ($accepted)",
-    async ({ source, accepted, suppressed }) => {
-      const echo: ReplyPayload = {
-        text: "Bash",
-        channelData: { openclawToolProgressId: "call-1" },
-      };
-      const unmatched: ReplyPayload = {
-        ...echo,
-        channelData: { openclawToolProgressId: "call-2" },
-      };
-      const onDurableToolResult = vi.fn(async () => {});
-      state.execute.mockImplementation(async (params: AgentTurnParams) => {
-        expect(params.shouldEmitToolResult()).toBe(true);
-        if (source === "tool") {
-          await params.opts?.onToolStart?.({ toolCallId: "call-1", name: "bash", phase: "start" });
-        } else if (source === "item") {
-          await params.opts?.onItemEvent?.({ itemId: "call-1", kind: "tool", phase: "start" });
-        } else {
-          await params.opts?.onCommandOutput?.({ toolCallId: "call-1", phase: "end", exitCode: 0 });
-        }
-        await params.opts?.onToolResult?.(echo);
-        await params.opts?.onToolResult?.(unmatched);
-        return { runId: "run-1", outcome: { kind: "rejected", payload: { text: "done" } } };
-      });
-
-      const result = await executeFollowupTurn({
-        turn: createTurn(),
-        defaults: {
-          typing: createTypingController(),
-          typingMode: "never",
-          defaultModel: "claude",
-          opts: {
-            suppressDefaultToolProgressMessages: true,
-            onToolStart: () => accepted,
-            onItemEvent: async () => accepted,
-            onCommandOutput: () => accepted,
-          },
-        },
-        onToolResult: onDurableToolResult,
-        onCompactionNoticePayload: vi.fn(async () => {}),
-      });
-      await result.progress.drain();
-
-      expect(onDurableToolResult.mock.calls).toEqual(
-        (suppressed ? [unmatched] : [echo, unmatched]).map((payload) => [
-          payload,
-          { runId: "run-1" },
-        ]),
-      );
-    },
-  );
-
-  it.each([false, true])(
-    "keeps queued durable results and unrendered failures after accepted activity (failed outcome=%s)",
-    async (failedOutcomeVisible) => {
-      const failed: ReplyPayload = {
-        text: "Command failed",
-        isError: true,
-        channelData: { openclawToolProgressId: "call-1" },
-      };
-      const progressData = { openclawToolProgressId: "call-1" };
-      const durable: ReplyPayload[] = [
-        { mediaUrl: "https://example.com/result.png", channelData: progressData },
-        { channelData: { ...progressData, execApproval: { approvalId: "approval-1" } } },
-        { channelData: { ...progressData, execApprovalUnavailable: { reason: "no-route" } } },
-        { channelData: { ...progressData, askUser: { questionId: "question-1" } } },
-      ];
-      const onDurableToolResult = vi.fn(async () => {});
+  it.each(["on", "full"] as const)(
+    "leaves queued verbose %s results to the channel delivery owner",
+    async (verboseLevel) => {
+      const summary: ReplyPayload =
+        verboseLevel === "full"
+          ? { text: "Bash\n```txt\nfull diagnostic output\n```" }
+          : {
+              text: "Bash",
+              channelData: { openclawToolProgressId: "call-1" },
+            };
+      const turn = createTurn();
+      turn.queued.run.verboseLevelOverride = verboseLevel;
+      const onToolResult = vi.fn(async () => {});
       state.execute.mockImplementation(async (params: AgentTurnParams) => {
         await params.opts?.onToolStart?.({ toolCallId: "call-1", name: "bash", phase: "start" });
-        await params.opts?.onToolResult?.(failed);
-        await params.opts?.onCommandOutput?.({ toolCallId: "call-1", phase: "end", exitCode: 1 });
-        await params.opts?.onToolResult?.(failed);
-        for (const payload of durable) {
-          await params.opts?.onToolResult?.(payload);
-        }
+        await params.opts?.onToolResult?.(summary);
         return { runId: "run-1", outcome: { kind: "rejected", payload: { text: "done" } } };
       });
-
       const result = await executeFollowupTurn({
-        turn: createTurn(),
+        turn,
         defaults: {
           typing: createTypingController(),
           typingMode: "never",
           defaultModel: "claude",
-          opts: {
-            suppressDefaultToolProgressMessages: true,
-            onToolStart: () => true,
-            onCommandOutput: () => failedOutcomeVisible,
-          },
+          opts: { suppressDefaultToolProgressMessages: true, onToolStart: () => true },
         },
-        onToolResult: onDurableToolResult,
+        onToolResult,
         onCompactionNoticePayload: vi.fn(async () => {}),
       });
       await result.progress.drain();
-
-      expect(onDurableToolResult.mock.calls).toEqual(
-        [failed, ...(failedOutcomeVisible ? [] : [failed]), ...durable].map((payload) => [
-          payload,
-          { runId: "run-1" },
-        ]),
-      );
-    },
-  );
-
-  it.each([false, "reject"] as const)(
-    "restores queued verbose fallback after terminal rendering returns %s",
-    async (terminalResult) => {
-      const echo: ReplyPayload = {
-        text: "Bash completed",
-        channelData: { openclawToolProgressId: "call-1" },
-      };
-      const onDurableToolResult = vi.fn(async () => {});
-      state.execute.mockImplementation(async (params: AgentTurnParams) => {
-        await params.opts?.onToolStart?.({ toolCallId: "call-1", phase: "start" });
-        await params.opts?.onItemEvent?.({ toolCallId: "call-1", kind: "tool", phase: "end" });
-        await params.opts?.onToolResult?.(echo);
-        return { runId: "run-1", outcome: { kind: "rejected", payload: { text: "done" } } };
-      });
-
-      const result = await executeFollowupTurn({
-        turn: createTurn(),
-        defaults: {
-          typing: createTypingController(),
-          typingMode: "never",
-          defaultModel: "claude",
-          opts: {
-            suppressDefaultToolProgressMessages: true,
-            onToolStart: () => true,
-            onItemEvent: async () => {
-              if (terminalResult === "reject") {
-                throw new Error("terminal rendering failed");
-              }
-              return terminalResult;
-            },
-          },
-        },
-        onToolResult: onDurableToolResult,
-        onCompactionNoticePayload: vi.fn(async () => {}),
-      });
-      if (terminalResult === "reject") {
-        await expect(result.progress.drain()).rejects.toThrow("terminal rendering failed");
-      } else {
-        await result.progress.drain();
-      }
-
-      expect(onDurableToolResult.mock.calls).toEqual([[echo, { runId: "run-1" }]]);
+      expect(onToolResult).toHaveBeenCalledExactlyOnceWith(summary, { runId: "run-1" });
     },
   );
 });

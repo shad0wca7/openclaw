@@ -346,7 +346,10 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
       );
       const draftController = await createMatrixDraftController({
         streaming: allowProviderPreview ? streaming : "off",
-        conversationTimeline: isDirectMessage,
+        conversationTimeline:
+          isDirectMessage &&
+          blockStreamingEnabled &&
+          (streaming === "partial" || streaming === "quiet"),
         previewToolProgressEnabled: allowProviderPreview && previewToolProgressEnabled,
         replyToMode,
         messageId,
@@ -503,7 +506,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
             },
             replyOptions: {
               skillFilter: roomConfig?.skills,
-              commentaryPayloadsEnabled: isDirectMessage,
+              commentaryPayloadsEnabled: isDirectMessage && blockStreamingEnabled,
               preserveProgressCallbackStartOrder: isDirectMessage,
               // Preserve explicit block streaming with draft previews: drafts update the live
               // block, while block deliveries finalize completed blocks as separate events.

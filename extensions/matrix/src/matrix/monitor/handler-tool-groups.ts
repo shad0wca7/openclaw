@@ -1,4 +1,6 @@
+import { buildChannelProgressDraftLineForEntry } from "openclaw/plugin-sdk/channel-outbound";
 import type { GetReplyOptions } from "openclaw/plugin-sdk/reply-runtime";
+import { formatMatrixToolProgressMarkdownCode } from "./handler-helpers.js";
 import type { MatrixDraftStreamHandle } from "./handler-runtime.js";
 
 type MatrixToolEvent = Parameters<NonNullable<GetReplyOptions["onToolStart"]>>[0] & {
@@ -13,17 +15,6 @@ type ToolGroup = {
   calls: Set<ToolCall>;
 };
 
-function toolLabel(name: string): string {
-  // Only canonical identifier text belongs here, never arguments, result text,
-  // mention syntax, or markup. Keep arbitrary provider names single-line/bounded.
-  if (!/^[a-z0-9_.:/-]{1,160}$/i.test(name)) {
-    return "Tool";
-  }
-  const leaf = name.split(/__|[.:/]/).at(-1) ?? name;
-  const label = leaf.replace(/[_-]+/g, " ").trim();
-  return label ? label.charAt(0).toUpperCase() + label.slice(1) : "Tool";
-}
-
 function renderGroup(group: ToolGroup): string {
   const counts: Record<ToolState, number> = { done: 0, running: 0, failed: 0, cancelled: 0 };
   for (const call of group.calls) {
@@ -37,7 +28,10 @@ function renderGroup(group: ToolGroup): string {
 }
 
 /** Consecutive activity membership; the caller owns presentation ordering. */
-export function createMatrixToolGroups(params: { createStream: () => MatrixDraftStreamHandle }) {
+export function createMatrixToolGroups(params: {
+  createStream: () => MatrixDraftStreamHandle;
+  entry?: Parameters<typeof buildChannelProgressDraftLineForEntry>[0];
+}) {
   const callsById = new Map<string, ToolCall>();
   const groups: ToolGroup[] = [];
   let current: ToolGroup | undefined;
@@ -72,18 +66,39 @@ export function createMatrixToolGroups(params: { createStream: () => MatrixDraft
     }
     let call = ids.map((id) => callsById.get(id)).find((known) => known !== undefined);
     const phase = payload.phase ?? "start";
+    const name = payload.name?.trim().toLowerCase();
+    let label: string | undefined;
+    if (phase === "start" && name && (!call || payload.args)) {
+      // Reuse the existing detail/command policy; grouping must not invent a
+      // second verbosity mode or expose provider labels as Matrix markup.
+      const line = buildChannelProgressDraftLineForEntry(
+        params.entry,
+        /^[a-z0-9_.:/-]{1,160}$/i.test(name)
+          ? { ...payload, event: "tool" }
+          : { event: "tool", name: "tool" },
+        { detailMode: payload.detailMode },
+      );
+      if (!line) {
+        return false;
+      }
+      label = formatMatrixToolProgressMarkdownCode(
+        `${line.icon} ${line.label}${line.detail ? `: ${line.detail}` : ""}`,
+      );
+    }
     if (!call) {
-      const name = payload.name?.trim().toLowerCase();
-      if (phase !== "start" || !name) {
+      if (phase !== "start" || !name || !label) {
         return false;
       }
       if (current?.name !== name) {
         await closeGroup();
-        current = { name, label: toolLabel(name), stream: params.createStream(), calls: new Set() };
+        current = { name, label: "", stream: params.createStream(), calls: new Set() };
         groups.push(current);
       }
       call = { state: "running", group: current };
       current.calls.add(call);
+    }
+    if (label && call.group === current) {
+      current.label = label;
     }
     for (const id of ids) {
       callsById.set(id, call);
@@ -133,6 +148,7 @@ export function createMatrixToolGroups(params: { createStream: () => MatrixDraft
     const failed =
       payload.status === "failed" ||
       payload.status === "error" ||
+      payload.status === "blocked" ||
       (typeof payload.exitCode === "number" && payload.exitCode !== 0);
     const cancelled = payload.status === "cancelled" || payload.status === "canceled";
     const done =
@@ -147,6 +163,8 @@ export function createMatrixToolGroups(params: { createStream: () => MatrixDraft
 
   return {
     pushTool,
+    hasTool: (payload: { toolCallId?: string; itemId?: string }) =>
+      [payload.toolCallId, payload.itemId].some((id) => id && callsById.has(id)),
     pushItem: async (payload: Parameters<NonNullable<GetReplyOptions["onItemEvent"]>>[0]) =>
       await pushOutcome(payload),
     pushCommandOutput: async (
@@ -160,7 +178,11 @@ export function createMatrixToolGroups(params: { createStream: () => MatrixDraft
       groups.length = 0;
       finished = false;
     },
-    hasVisibleTool: (toolCallId: string): boolean =>
-      Boolean(callsById.get(toolCallId)?.group.stream.eventId()),
+    hasVisibleTool: (toolCallId: string): boolean => {
+      const group = callsById.get(toolCallId)?.group;
+      return Boolean(
+        group?.stream.eventId() && group.stream.matchesPreparedText(renderGroup(group)),
+      );
+    },
   };
 }

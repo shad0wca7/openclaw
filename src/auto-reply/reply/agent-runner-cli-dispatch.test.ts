@@ -857,6 +857,7 @@ describe("createCliToolSummaryTracker", () => {
       expect(payload.text).not.toContain("date -u");
       expect(payload.text).not.toContain("Wed Jun 10 2026");
       expect(payload.isError).toBeUndefined();
+      expect(payload).toHaveProperty("channelData.openclawToolProgressId", "tool-1");
     },
   );
 
@@ -873,6 +874,7 @@ describe("createCliToolSummaryTracker", () => {
     const payload = deliver.mock.calls[0]?.[0] as { text: string };
     expect(payload.text).toContain("```txt");
     expect(payload.text).toContain("Wed Jun 10 2026");
+    expect(payload).not.toHaveProperty("channelData.openclawToolProgressId");
   });
 
   it("renders top-level structured CLI results in full verbose output", async () => {
@@ -967,7 +969,6 @@ describe("createCliToolSummaryTracker", () => {
 
       expect(deliver).toHaveBeenCalledWith({
         text: fullOutput ? "🗺️ Progress Card\n```txt\nwrite failed\n```" : "🗺️ Progress Card",
-        channelData: { openclawToolProgressId: "plan-error" },
         isError: true,
       });
     },
@@ -985,6 +986,7 @@ describe("createCliToolSummaryTracker", () => {
     await tracker.noteToolEvent({ ...resultEvent, isError: true });
     const payload = deliver.mock.calls[0]?.[0] as { isError?: boolean };
     expect(payload.isError).toBe(true);
+    expect(payload).not.toHaveProperty("channelData.openclawToolProgressId");
   });
 
   it("summarizes results without a tracked start event", async () => {

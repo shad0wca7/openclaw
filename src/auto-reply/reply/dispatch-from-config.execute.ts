@@ -189,7 +189,17 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                   await params.replyOptions?.onQueuedFollowupSettled?.();
                 },
                 onBlockReplyQueued: wrapProgressCallback(params.replyOptions?.onBlockReplyQueued),
-                onToolStart: state.onToolStart,
+                onToolStart: wrapProgressCallback(params.replyOptions?.onToolStart, {
+                  allowWhenToolSummariesHidden:
+                    params.replyOptions?.allowToolLifecycleWhenProgressHidden === true,
+                  forwardWhenSourceDeliverySuppressed: true,
+                  requiresToolSummaryVisibility: true,
+                  waitForDirectBlockReplyDelivery: true,
+                  onForward: async () => {
+                    // Commentary precedes the tool that follows it.
+                    await flushPendingCommentaryProgress();
+                  },
+                }),
                 onItemEvent: state.onItemEvent,
                 commentaryProgressEnabled:
                   state.deliverStandaloneCommentaryProgress ||
@@ -197,7 +207,11 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                   params.replyOptions?.commentaryProgressEnabled,
                 reasoningPayloadsEnabled,
                 commentaryPayloadsEnabled,
-                onCommandOutput: state.onCommandOutput,
+                onCommandOutput: wrapProgressCallback(params.replyOptions?.onCommandOutput, {
+                  forwardWhenSourceDeliverySuppressed: true,
+                  requiresToolSummaryVisibility: true,
+                  waitForDirectBlockReplyDelivery: true,
+                }),
                 onCompactionStart: wrapProgressCallback(params.replyOptions?.onCompactionStart, {
                   allowWhenToolSummariesHidden:
                     params.replyOptions?.allowToolLifecycleWhenProgressHidden === true,
@@ -295,13 +309,6 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                       }
                     }
                     if (state.sendPolicyDenied) {
-                      return;
-                    }
-                    if (
-                      !durableToolResult &&
-                      !isFastModeAutoProgress &&
-                      (await state.isVisibleToolProgressEcho(payload))
-                    ) {
                       return;
                     }
                     const bypassToolSummarySuppression =

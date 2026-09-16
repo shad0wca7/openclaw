@@ -1174,130 +1174,19 @@ describe("dispatchReplyFromConfig", () => {
     expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
   });
 
-  it.each([
-    { source: "tool", visible: true, suppressed: true },
-    { source: "tool", visible: false, suppressed: false },
-    { source: "tool", visible: undefined, suppressed: false },
-    { source: "item", visible: true, suppressed: true },
-    { source: "item", visible: false, suppressed: false },
-  ] as const)(
-    "dedupes correlated $source summaries only after confirmed visibility ($visible)",
-    async ({ source, visible, suppressed }) => {
+  it.each(["on", "full"] as const)(
+    "leaves verbose %s results to the channel delivery owner",
+    async (verboseLevel) => {
       setNoAbort();
-      sessionStoreMocks.currentEntry = { verboseLevel: "on" };
+      sessionStoreMocks.currentEntry = { verboseLevel };
       const dispatcher = createDispatcher();
-      const echo: ReplyPayload = {
-        text: "🔧 Bash",
-        channelData: { openclawToolProgressId: "call-1" },
-      };
-      await dispatchReplyFromConfig({
-        ctx: buildTestCtx({
-          Provider: "matrix",
-          ChatType: "direct",
-          SessionKey: "agent:main:matrix:direct:dm",
-        }),
-        cfg: emptyConfig,
-        dispatcher,
-        replyOptions: {
-          suppressDefaultToolProgressMessages: true,
-          onToolStart: async () => visible,
-          onItemEvent: async () => visible,
-        },
-        replyResolver: async (_ctx, opts) => {
-          if (source === "tool") {
-            await opts?.onToolStart?.({ toolCallId: "call-1", name: "bash", phase: "start" });
-          } else {
-            await opts?.onItemEvent?.({ itemId: "call-1", kind: "tool", phase: "start" });
-          }
-          await opts?.onToolResult?.(echo);
-          return { text: "done" };
-        },
-      });
-      expect(vi.mocked(dispatcher.sendToolResult).mock.calls).toEqual(suppressed ? [] : [[echo]]);
-      expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
-    },
-  );
-
-  it.each([false, true])(
-    "retains uncorrelated, failed and durable results until their own visible outcome (ordered=%s)",
-    async (preserveProgressCallbackStartOrder) => {
-      setNoAbort();
-      sessionStoreMocks.currentEntry = { verboseLevel: "full" };
-      const dispatcher = createDispatcher();
-      const failed: ReplyPayload = {
-        text: "Failed command",
-        isError: true,
-        channelData: { openclawToolProgressId: "call-1" },
-      };
-      const media: ReplyPayload = {
-        text: "File",
-        mediaUrl: "https://example.com/output.png",
-        channelData: { openclawToolProgressId: "call-1" },
-      };
-      const unmatched: ReplyPayload = {
-        text: "Another call",
-        channelData: { openclawToolProgressId: "call-2" },
-      };
-      await dispatchReplyFromConfig({
-        ctx: buildTestCtx({
-          Provider: "matrix",
-          ChatType: "direct",
-          SessionKey: "agent:main:matrix:direct:dm",
-        }),
-        cfg: emptyConfig,
-        dispatcher,
-        replyOptions: {
-          suppressDefaultToolProgressMessages: true,
-          preserveProgressCallbackStartOrder,
-          onToolStart: async () => true,
-          onItemEvent: async () => true,
-        },
-        replyResolver: async (_ctx, opts) => {
-          await opts?.onToolStart?.({ toolCallId: "call-1", name: "bash", phase: "start" });
-          await opts?.onToolResult?.(unmatched);
-          await opts?.onToolResult?.(failed);
-          await opts?.onItemEvent?.({
-            toolCallId: "call-1",
-            name: "bash",
-            kind: "tool",
-            phase: "end",
-            status: "failed",
-          });
-          await opts?.onToolResult?.(failed);
-          await opts?.onToolResult?.(media);
-          return { text: "done" };
-        },
-      });
-      expect(vi.mocked(dispatcher.sendToolResult).mock.calls).toEqual([
-        [unmatched],
-        [failed],
-        [media],
-      ]);
-    },
-  );
-
-  it.each([
-    { source: "item", outcome: false },
-    { source: "item", outcome: undefined },
-    { source: "item", outcome: "reject" },
-    { source: "command", outcome: false },
-    { source: "command", outcome: "reject" },
-  ] as const)(
-    "restores verbose fallback after the latest $source rendering is not accepted ($outcome)",
-    async ({ source, outcome }) => {
-      setNoAbort();
-      sessionStoreMocks.currentEntry = { verboseLevel: "on" };
-      const dispatcher = createDispatcher();
-      const echo: ReplyPayload = {
-        text: "Bash completed",
-        channelData: { openclawToolProgressId: "call-1" },
-      };
-      const onTerminal = async () => {
-        if (outcome === "reject") {
-          throw new Error("terminal rendering failed");
-        }
-        return outcome;
-      };
+      const summary: ReplyPayload =
+        verboseLevel === "full"
+          ? { text: "Bash\n```txt\nfull diagnostic output\n```" }
+          : {
+              text: "Bash",
+              channelData: { openclawToolProgressId: "call-1" },
+            };
       await dispatchReplyFromConfig({
         ctx: buildTestCtx({
           Provider: "matrix",
@@ -1309,72 +1198,14 @@ describe("dispatchReplyFromConfig", () => {
         replyOptions: {
           suppressDefaultToolProgressMessages: true,
           onToolStart: () => true,
-          onItemEvent: onTerminal,
-          onCommandOutput: onTerminal,
         },
         replyResolver: async (_ctx, opts) => {
-          await opts?.onToolStart?.({
-            toolCallId: "call-1",
-            itemId: "item-1",
-            name: "bash",
-            phase: "start",
-          });
-          const terminal =
-            source === "item"
-              ? opts?.onItemEvent?.({ itemId: "item-1", kind: "tool", phase: "end" })
-              : opts?.onCommandOutput?.({ itemId: "item-1", phase: "end", exitCode: 0 });
-          await Promise.resolve(terminal).catch(() => undefined);
-          await opts?.onToolResult?.(echo);
+          await opts?.onToolStart?.({ toolCallId: "call-1", name: "bash", phase: "start" });
+          await opts?.onToolResult?.(summary);
           return { text: "done" };
         },
       });
-
-      expect(vi.mocked(dispatcher.sendToolResult).mock.calls).toEqual([[echo]]);
-      expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
-    },
-  );
-
-  it.each([false, true])(
-    "awaits matching activity acceptance before deciding verbose fallback (ordered=%s)",
-    async (preserveProgressCallbackStartOrder) => {
-      setNoAbort();
-      sessionStoreMocks.currentEntry = { verboseLevel: "on" };
-      const accepted = createDeferred<boolean>();
-      let deliveredBeforeAcceptance = false;
-      const dispatcher = createDispatcher();
-      await dispatchReplyFromConfig({
-        ctx: buildTestCtx({
-          Provider: "matrix",
-          ChatType: "direct",
-          SessionKey: "agent:main:matrix:direct:dm",
-        }),
-        cfg: emptyConfig,
-        dispatcher,
-        replyOptions: {
-          suppressDefaultToolProgressMessages: true,
-          preserveProgressCallbackStartOrder,
-          onToolStart: () => accepted.promise,
-        },
-        replyResolver: async (_ctx, opts) => {
-          const activity = opts?.onToolStart?.({ toolCallId: "call-1", phase: "start" });
-          const echo = opts?.onToolResult?.({
-            text: "Bash",
-            channelData: { openclawToolProgressId: "call-1" },
-          });
-          try {
-            await new Promise<void>((resolve) => {
-              setImmediate(resolve);
-            });
-            deliveredBeforeAcceptance = vi.mocked(dispatcher.sendToolResult).mock.calls.length > 0;
-          } finally {
-            accepted.resolve(true);
-          }
-          await Promise.all([activity, echo]);
-          return { text: "done" };
-        },
-      });
-      expect(deliveredBeforeAcceptance).toBe(false);
-      expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
+      expect(dispatcher.sendToolResult).toHaveBeenCalledExactlyOnceWith(summary);
     },
   );
 
@@ -1446,6 +1277,40 @@ describe("dispatchReplyFromConfig", () => {
       });
       expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
       expect(onToolStart).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["on", "full"] as const)(
+    "keeps durable commentary suppressed in message-tool-only mode with verbose %s",
+    async (verboseLevel) => {
+      setNoAbort();
+      sessionStoreMocks.currentEntry = { verboseLevel };
+      const dispatcher = createDispatcher();
+      await dispatchReplyFromConfig({
+        ctx: buildTestCtx({
+          Provider: "matrix",
+          ChatType: "direct",
+          SessionKey: "agent:main:matrix:direct:dm",
+        }),
+        cfg: emptyConfig,
+        dispatcher,
+        replyOptions: {
+          commentaryPayloadsEnabled: true,
+          sourceReplyDeliveryMode: "message_tool_only",
+        },
+        replyResolver: async (_ctx, opts) => {
+          await opts?.onItemEvent?.({
+            itemId: "ack",
+            kind: "preamble",
+            phase: "end",
+            progressText: "I will check.",
+          });
+          await opts?.onToolResult?.({ text: "Tool details" });
+          return { text: "Done" };
+        },
+      });
+      expect(dispatcher.sendBlockReply).not.toHaveBeenCalled();
+      expect(dispatcher.sendToolResult).toHaveBeenCalledExactlyOnceWith({ text: "Tool details" });
     },
   );
 

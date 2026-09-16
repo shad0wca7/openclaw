@@ -16,7 +16,7 @@ import type { BlockReplyContext, ReplyPayload } from "./runtime-api.js";
 
 export async function createMatrixDraftController(params: {
   streaming: MatrixStreamingMode;
-  /** Streaming DMs retain conversation text and group activity independently. */
+  /** Opted-in DMs retain conversation text and group activity independently. */
   conversationTimeline?: boolean;
   previewToolProgressEnabled: boolean;
   replyToMode: ReplyToMode;
@@ -45,6 +45,7 @@ export async function createMatrixDraftController(params: {
   const draftStreamingEnabled = streaming !== "off";
   const quietDraftStreaming = streaming === "quiet" || streaming === "progress";
   const progressDraftStreaming = streaming === "progress";
+  const hasRepliedRef = { value: false };
   const draftReplyToId = replyToMode !== "off" && !threadTarget ? messageId : undefined;
   const draftStream: MatrixDraftStreamHandle | undefined = draftStreamingEnabled
     ? await loadMatrixDraftStream().then(({ createMatrixDraftStream }) =>
@@ -56,6 +57,7 @@ export async function createMatrixDraftController(params: {
           threadId: threadTarget,
           replyToId: draftReplyToId,
           preserveReplyId: replyToMode === "all",
+          ...(params.conversationTimeline ? { hasRepliedRef } : {}),
           accountId,
           log: logVerboseMessage,
         }),
@@ -86,12 +88,17 @@ export async function createMatrixDraftController(params: {
       mode: "quiet",
       threadId: threadTarget,
       replyToId: draftReplyToId,
+      preserveReplyId: replyToMode === "all",
+      hasRepliedRef,
       accountId,
       log: logVerboseMessage,
     });
   };
   const toolGroups = conversationTimeline
-    ? createMatrixToolGroups({ createStream: createQuietStream })
+    ? createMatrixToolGroups({
+        createStream: createQuietStream,
+        entry: accountConfig ?? cfg.channels?.matrix,
+      })
     : undefined;
   let statusStream: MatrixDraftStreamHandle | undefined;
   const closeStatus = async () => {
@@ -225,29 +232,36 @@ export async function createMatrixDraftController(params: {
     if (!shouldSuppressDefaultToolProgressMessages) {
       return {};
     }
+    const onToolStart: NonNullable<GetReplyOptions["onToolStart"]> = async (payload) => {
+      if (conversationTimeline && shouldStreamPreviewToolProgress) {
+        return await enqueuePresentation(async () => {
+          if (timelineFinished) {
+            return false;
+          }
+          if ((payload.phase ?? "start") === "start" && !toolGroups!.hasTool(payload)) {
+            progressDraft.beginNewTurn({ force: true });
+            await closeStatus();
+            await retainTimelineText();
+          }
+          return await toolGroups!.pushTool(payload);
+        });
+      }
+      return await progressDraft.pushToolEvent(payload);
+    };
     return {
       suppressDefaultToolProgressMessages: true,
       progressPreambleEnabled: true,
       commentaryProgressEnabled: progressDraft.commentaryProgressEnabled,
-      onToolStart: async (payload) => {
-        if (conversationTimeline && shouldStreamPreviewToolProgress) {
-          return await enqueuePresentation(async () => {
-            if (timelineFinished) {
-              return false;
-            }
-            progressDraft.beginNewTurn({ force: true });
-            await closeStatus();
-            await retainTimelineText();
-            return await toolGroups!.pushTool(payload);
-          });
-        }
-        return await progressDraft.pushToolEvent(payload);
-      },
+      onToolStart,
       onItemEvent: async (payload) => {
         // The durable commentary pipeline owns preambles; never echo them in a card.
         if (conversationTimeline) {
           if (payload.kind === "preamble" || payload.kind === "answer-candidate") {
             return false;
+          }
+          // Some providers expose native tool calls only as item events.
+          if (payload.kind === "tool" && payload.phase === "start") {
+            return await onToolStart(payload);
           }
           const accepted = await enqueuePresentation(async () =>
             timelineFinished ? false : await toolGroups!.pushItem(payload),
@@ -391,8 +405,10 @@ export async function createMatrixDraftController(params: {
   return {
     draftStream,
     previewLifecycle,
+    hasRepliedRef,
     conversationTimeline,
     enqueuePresentation,
+    hasVisibleTool: (toolCallId: string) => toolGroups?.hasVisibleTool(toolCallId) === true,
     prepareTimelineDelivery: async (payload: ReplyPayload, kind: string) => {
       if (!conversationTimeline) {
         return;
@@ -430,7 +446,8 @@ export async function createMatrixDraftController(params: {
       previewLifecycle.reset();
       progressDraft.beginNewTurn({ force: true });
     },
-    currentReplyToId: () => currentDraftReplyToId,
+    currentReplyToId: () =>
+      conversationTimeline ? draftStream?.replyToId() : currentDraftReplyToId,
     setCurrentReplyToId: (replyToId: string | undefined) => {
       currentDraftReplyToId = replyToId;
     },

@@ -32,6 +32,8 @@ export function createMatrixDraftStream(params: {
   mode?: MatrixDraftPreviewMode;
   threadId?: string;
   replyToId?: string;
+  /** Shared first-reply slot when text and activity use separate streams. */
+  hasRepliedRef?: { value: boolean };
   /** When true, reset() restores the original replyToId instead of clearing it. */
   preserveReplyId?: boolean;
   accountId?: string;
@@ -52,6 +54,10 @@ export function createMatrixDraftStream(params: {
   let finalizeInPlaceBlocked = false;
   let liveFinalized = false;
   let replyToId = params.replyToId;
+  const resolveReplyToId = () =>
+    !currentEventId && params.hasRepliedRef?.value && !params.preserveReplyId
+      ? undefined
+      : replyToId;
 
   const sendOrEdit = async (text: string): Promise<boolean> => {
     const trimmed = text.trimEnd();
@@ -82,6 +88,7 @@ export function createMatrixDraftStream(params: {
     }
     try {
       if (!currentEventId) {
+        replyToId = resolveReplyToId();
         const result = await sendSingleTextMessageMatrix(roomId, preparedText.trimmedText, {
           client,
           cfg,
@@ -93,6 +100,9 @@ export function createMatrixDraftStream(params: {
           live: useLive,
         });
         currentEventId = result.messageId;
+        if (replyToId && params.hasRepliedRef) {
+          params.hasRepliedRef.value = true;
+        }
         lastSentText = preparedText.trimmedText;
         lastSentContent = preparedText.convertedText;
         log?.(`draft-stream: created message ${currentEventId}${useLive ? " (MSC4357 live)" : ""}`);
@@ -229,6 +239,7 @@ export function createMatrixDraftStream(params: {
     finalizeLive,
     reset,
     eventId: () => currentEventId,
+    replyToId: resolveReplyToId,
     text: () => lastSentText || undefined,
     isStopped: () => streamState.stopped,
     content: () => lastSentContent || undefined,

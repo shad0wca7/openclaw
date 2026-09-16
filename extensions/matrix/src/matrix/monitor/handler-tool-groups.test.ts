@@ -22,7 +22,7 @@ vi.mock("../send.js", () => ({
 
 type ToolEvent = Parameters<NonNullable<GetReplyOptions["onToolStart"]>>[0];
 
-function createGroups() {
+function createGroups(entry?: Parameters<typeof createMatrixToolGroups>[0]["entry"]) {
   const createStream = vi.fn(() =>
     createMatrixDraftStream({
       roomId: "!room:example.org",
@@ -31,7 +31,7 @@ function createGroups() {
       mode: "quiet",
     }),
   );
-  return { groups: createMatrixToolGroups({ createStream }), createStream };
+  return { groups: createMatrixToolGroups({ createStream, entry }), createStream };
 }
 
 function start(name: string, toolCallId: string, extra: Partial<ToolEvent> = {}): ToolEvent {
@@ -85,7 +85,7 @@ describe("Matrix consecutive tool groups", () => {
     await groups.pushTool(start("read", "read-one"));
     await groups.pushTool(start("read", "read-two"));
     await groups.pushTool(start("exec", "exec-one"));
-    expect(transport.edit.mock.calls[0]?.[2]).toBe("Read × 2 · 2 running");
+    expect(transport.edit.mock.calls[0]?.[2]).toBe("`📖 Read` × 2 · 2 running");
     expect(transport.edit.mock.invocationCallOrder[0]).toBeLessThan(
       transport.send.mock.invocationCallOrder[1]!,
     );
@@ -93,10 +93,10 @@ describe("Matrix consecutive tool groups", () => {
     await groups.pushTool(start("exec", "exec-two"));
     await groups.pushTool(start("read", "read-three"));
     expect(transport.send.mock.calls.map((call) => call[1])).toEqual([
-      "Read × 1 · 1 running",
-      "Exec × 1 · 1 running",
-      "Exec × 1 · 1 running",
-      "Read × 1 · 1 running",
+      "`📖 Read` × 1 · 1 running",
+      "`🛠️ Exec` × 1 · 1 running",
+      "`🛠️ Exec` × 1 · 1 running",
+      "`📖 Read` × 1 · 1 running",
     ]);
     await groups.finish();
   });
@@ -112,12 +112,12 @@ describe("Matrix consecutive tool groups", () => {
     );
     expect(transport.edit.mock.calls.at(-1)?.slice(1, 3)).toEqual([
       "$tool-1",
-      "Read × 1 · 1 failed",
+      "`📖 Read` × 1 · 1 failed",
     ]);
     await groups.pushTool({ itemId: "item-one", phase: "result", isError: false });
     await groups.finish();
     expect(transport.send).toHaveBeenCalledTimes(2);
-    expect(transport.edit.mock.calls.at(-1)?.[2]).toBe("Read × 1 · 1 failed");
+    expect(transport.edit.mock.calls.at(-1)?.[2]).toBe("`📖 Read` × 1 · 1 failed");
     expect(groups.hasVisibleTool("call-one")).toBe(true);
     expect(groups.hasVisibleTool("item-one")).toBe(true);
   });
@@ -132,7 +132,7 @@ describe("Matrix consecutive tool groups", () => {
     await groups.pushTool({ toolCallId: "cancelled", phase: "cancelled" });
     await groups.finish();
     expect(transport.edit.mock.calls.at(-1)?.[2]).toBe(
-      "Automations × 4 · 1 done · 1 running · 1 failed · 1 cancelled",
+      "`🧩 Automations` × 4 · 1 done · 1 running · 1 failed · 1 cancelled",
     );
     const sent = transport.send.mock.calls.length;
     const edited = transport.edit.mock.calls.length;
@@ -143,7 +143,7 @@ describe("Matrix consecutive tool groups", () => {
     expect(transport.edit).toHaveBeenCalledTimes(edited);
   });
 
-  it("declines uncorrelated updates and never prints arguments or unsafe tool labels", async () => {
+  it("declines uncorrelated updates and never prints unselected arguments or unsafe labels", async () => {
     const { groups, createStream } = createGroups();
     expect(await groups.pushTool({ name: "read", phase: "start" })).toBe(false);
     expect(await groups.pushTool({ name: "read", toolCallId: "unknown", phase: "update" })).toBe(
@@ -154,11 +154,38 @@ describe("Matrix consecutive tool groups", () => {
     await groups.pushTool(
       start("mcp__example__web_search", "safe", { args: { token: "private" } }),
     );
-    expect(transport.send.mock.calls.at(-1)?.[1]).toBe("Web search × 1 · 1 running");
+    expect(transport.send.mock.calls.at(-1)?.[1]).toBe(
+      "`🧩 Mcp Example Web Search` × 1 · 1 running",
+    );
     await groups.pushTool(start("<b>@room</b>\nSECRET", "unsafe"));
-    expect(transport.send.mock.calls.at(-1)?.[1]).toBe("Tool × 1 · 1 running");
+    expect(transport.send.mock.calls.at(-1)?.[1]).toBe("`🧩 Tool` × 1 · 1 running");
     await groups.finish();
   });
+
+  it.each(["explain", "raw"] as const)(
+    "uses the existing command visibility policy with %s details",
+    async (detailMode) => {
+      for (const commandText of ["none", "raw"] as const) {
+        const { groups } = createGroups({
+          streaming: { mode: "partial", preview: { commandText } },
+        });
+        await groups.pushTool(
+          start("exec", "one", {
+            detailMode,
+            args: { command: "echo visible-command", title: "Check the result" },
+          }),
+        );
+        const text = transport.send.mock.calls.at(-1)?.[1] as string;
+        expect(text.includes("visible-command")).toBe(
+          commandText === "raw" && detailMode === "raw",
+        );
+        expect(text.includes("Check the result")).toBe(
+          commandText === "raw" && detailMode === "explain",
+        );
+        await groups.finish();
+      }
+    },
+  );
 
   it("does not accept invisible first sends, preserving the normal summary fallback", async () => {
     transport.send.mockRejectedValueOnce(new Error("offline"));
@@ -181,6 +208,7 @@ describe("Matrix consecutive tool groups", () => {
       false,
     );
     expect(await groups.pushTool(start("bash", "three"))).toBe(false);
+    expect(groups.hasVisibleTool("two")).toBe(false);
     await groups.finish();
   });
 
@@ -216,7 +244,17 @@ describe("Matrix consecutive tool groups", () => {
     ).toBe(false);
     await groups.finish();
     expect(transport.send).toHaveBeenCalledOnce();
-    expect(transport.edit.mock.calls.at(-1)?.[2]).toBe("Bash × 3 · 1 done · 1 running · 1 failed");
+    expect(transport.edit.mock.calls.at(-1)?.[2]).toBe(
+      "`🛠️ Bash` × 3 · 1 done · 1 running · 1 failed",
+    );
+  });
+
+  it("settles a declined command as failed instead of leaving it running", async () => {
+    const { groups } = createGroups();
+    await groups.pushTool(start("bash", "declined"));
+    await groups.pushItem({ toolCallId: "declined", phase: "end", status: "blocked" });
+    await groups.finish();
+    expect(transport.edit.mock.calls.at(-1)?.[2]).toBe("`🛠️ Bash` × 1 · 1 failed");
   });
 
   it("resets turn-local IDs without editing or deleting retained history", async () => {
@@ -224,7 +262,7 @@ describe("Matrix consecutive tool groups", () => {
     await groups.pushTool(start("read", "same-id"));
     await groups.pushTool(start("read", "second-id"));
     await groups.reset();
-    expect(transport.edit.mock.calls.at(-1)?.[2]).toBe("Read × 2 · 2 running");
+    expect(transport.edit.mock.calls.at(-1)?.[2]).toBe("`📖 Read` × 2 · 2 running");
     expect(groups.hasVisibleTool("same-id")).toBe(false);
     expect(await groups.pushTool(start("read", "same-id"))).toBe(true);
     expect(transport.send).toHaveBeenCalledTimes(2);

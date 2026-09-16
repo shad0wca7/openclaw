@@ -136,6 +136,7 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
   let pendingCommentaryProgress: { itemId?: string; text: string } | null = null;
   const deliverCommentaryProgressMessage = async (text: string) => {
     if (
+      (state.commentaryPayloadsEnabled && state.suppressDelivery) ||
       (!state.commentaryPayloadsEnabled && !shouldSendToolSummaries()) ||
       shouldSuppressProgressDelivery()
     ) {
