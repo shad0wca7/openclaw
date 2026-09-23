@@ -123,7 +123,6 @@ it.each([
           timeoutMs: 20_000,
         },
         "restart",
-        true,
       );
     });
     if (inside) {

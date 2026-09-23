@@ -44,7 +44,6 @@ import { GatewayServiceUpdateOwnershipError } from "./update-command-service-pla
 import {
   maybeRestartService,
   maybeRestartServiceAfterFailedMutableUpdate,
-  maybeStopManagedServiceBeforeMutableUpdate,
   type PreManagedServiceStop,
 } from "./update-command-service.js";
 import {
@@ -444,13 +443,17 @@ export async function finishUpdate(
       pendingRestartAtMs ??= rollbackStopState.stoppedAtMs;
     };
     const convergePlugins = async () => {
+      // An owned managed service must stay parked through both the runtime
+      // publication it precedes and the fresh Doctor that follows it; an
+      // unmanaged/foreground origin only ever needs its handoff parked.
+      const beforeManagedMutation =
+        shouldRestart && params.preManagedServiceStop?.serviceUpdateVerdict?.kind === "owned"
+          ? parkForMaintenance
+          : parkForegroundOrigin;
       const pluginParams = {
         ...params,
-        beforeDoctor:
-          shouldRestart && params.preManagedServiceStop?.serviceUpdateVerdict?.kind === "owned"
-            ? parkForMaintenance
-            : parkForegroundOrigin,
-        beforeRuntimePublication: parkForegroundOrigin,
+        beforeDoctor: beforeManagedMutation,
+        beforeRuntimePublication: beforeManagedMutation,
         assertCurrent,
         candidateRuntime,
       };

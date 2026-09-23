@@ -1180,6 +1180,7 @@ describe("createModelSelectionState respects session model override", () => {
 
     const state = await createModelSelectionState({
       cfg,
+      agentId: "main",
       agentCfg: cfg.agents?.defaults,
       defaultProvider: "openai",
       defaultModel: "gpt-4o",
@@ -1212,6 +1213,7 @@ describe("createModelSelectionState respects session model override", () => {
     await expect(
       createModelSelectionState({
         cfg,
+        agentId: "main",
         agentCfg: cfg.agents?.defaults,
         defaultProvider: "openai",
         defaultModel: "gpt-5.6-sol",

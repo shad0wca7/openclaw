@@ -154,7 +154,7 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
       markInboundDedupeReplayUnsafe();
       // Join actual delivery before direct activity callbacks can overtake it.
       const delivery = payload.isCommentary
-        ? sendTrackedBlockReply(payload)
+        ? sendTrackedBlockReply({ kind: "raw", payload })
         : turnLedger.sendQueued("tool", payload);
       try {
         await requireQueuedReplyDelivery({

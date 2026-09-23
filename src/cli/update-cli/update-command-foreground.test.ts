@@ -316,15 +316,18 @@ it.each(["schema", "execution", "already current"] as const)(
       const operation =
         boundary === "schema"
           ? preflightUpdateCommandSchemas({ ...params, refuseUpdate })
-          : finishAlreadyCurrentUpdate({
-              ...params,
-              result: successfulUpdate,
-              requestedChannel: null,
-              storedChannel: null,
-              controlPlaneUpdateSentinelMeta: null,
-              packageInstallSpec: params.packageInstallSpec ?? null,
-              refuseUpdate,
-            });
+          : withUpdateCommandExecutor(params.opts.run.runId, (executor) =>
+              finishAlreadyCurrentUpdate({
+                ...params,
+                result: successfulUpdate,
+                requestedChannel: null,
+                storedChannel: null,
+                controlPlaneUpdateSentinelMeta: null,
+                packageInstallSpec: params.packageInstallSpec ?? null,
+                refuseUpdate,
+                enterUpdateExecutor: executor.enter,
+              }),
+            );
       await expect(operation.then(() => "admitted")).rejects.toMatchObject({
         reason: "managed-service-preflight",
       });

@@ -145,7 +145,7 @@ export function registerGitDevBranchTests(context: {
   root: string;
   beforeSha: string;
   git: (root: string, ...args: string[]) => Promise<string>;
-  update: (opts?: UpdateRunnerOptions) => Promise<UpdateRunResult>;
+  update: (opts?: Partial<UpdateRunnerOptions>) => Promise<UpdateRunResult>;
   advanceRemote: () => Promise<string>;
   expectRuntime: (root: string, sha: string) => Promise<void>;
 }) {
@@ -362,7 +362,7 @@ export function registerGitActivationDoctorOutcomeTests(
         advanceRemote,
         git,
         update,
-        expectNoRuntimeStagingPaths,
+        expectNoRuntimeStagingPaths: expectFixtureHasNoRuntimeStagingPaths,
       } = getFixture();
       const targetSha = await advanceRemote();
       const configChanges: UpdateDoctorConfigChange[] = [{ kind: "key", key: "agents" }];
@@ -435,7 +435,7 @@ export function registerGitActivationDoctorOutcomeTests(
       const expectedSha = outcome === "missing" ? beforeSha : targetSha;
       expect(await git(root, "rev-parse", "HEAD")).toBe(expectedSha);
       await expectRuntime(root, expectedSha);
-      await expectNoRuntimeStagingPaths();
+      await expectFixtureHasNoRuntimeStagingPaths();
       if (outcome !== "success") {
         expect(result.recovery).toMatchObject(
           outcome === "missing"

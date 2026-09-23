@@ -27,6 +27,10 @@ vi.mock("../../state/openclaw-state-ownership.js", async (original) => ({
   ...(await original<typeof import("../../state/openclaw-state-ownership.js")>()),
   assertOpenClawStateWriteAllowedAtPath: async () => {},
 }));
+vi.mock("./update-command-executor.js", async (original) => ({
+  ...(await original<typeof import("./update-command-executor.js")>()),
+  captureUpdateCommandExecutorAuthority: () => ({ installKey: "test-install-key" }),
+}));
 vi.mock("./update-command-service.js", async () => {
   const { UpdateCommandAbort } = await import("./update-command-windows-task.js");
   return {
@@ -100,6 +104,7 @@ it.each([
       controlPlaneUpdateSentinelMeta: null,
       stop: vi.fn(),
       refuseUpdate,
+      enterUpdateExecutor: async () => ({ assertCurrent: () => {} }),
     });
 
     expect(refuseUpdate).not.toHaveBeenCalled();

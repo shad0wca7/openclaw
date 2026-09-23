@@ -257,18 +257,6 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
       resolvedInheritedModel?.provider ?? resolvedChannelModel?.ref.provider ?? nativeTurnProvider;
     const statusModel =
       resolvedInheritedModel?.model ?? resolvedChannelModel?.ref.model ?? nativeTurnModel;
-    let resolvedDefaultThinkingLevel: ThinkLevel | undefined;
-    const resolveDefaultThinkingLevel = async () => {
-      resolvedDefaultThinkingLevel ??= await resolveNativeSlashDefaultThinkingLevel({
-        cfg: params.cfg,
-        agentId: params.agentId,
-        provider: statusProvider,
-        model: statusModel,
-        agentDir: params.agentDir,
-        workspaceDir: params.workspaceDir,
-      });
-      return resolvedDefaultThinkingLevel;
-    };
     const resolvedThinkLevel = normalizeThinkLevel(targetSessionEntry?.thinkingLevel);
     // This fast path has no model-state owner; prepare side-effect-free catalog facts directly.
     const thinkingCatalog = await readPreparedModelCatalog({
