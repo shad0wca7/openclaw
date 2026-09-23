@@ -975,6 +975,8 @@ describe("normalizeClaudeBackendConfig", () => {
           modelId: "claude-opus-4-7",
           authProfileId: "claude-cli:default",
           authCredential: { type: "api_key", provider: "claude-cli", key },
+        } as Parameters<NonNullable<typeof backend.prepareExecution>>[0] & {
+          authCredential: { type: "api_key"; provider: string; key: string };
         }),
       ).toThrow("Selected Claude CLI API-key profile contains OAuth or setup-token material");
     },

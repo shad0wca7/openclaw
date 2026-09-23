@@ -254,7 +254,6 @@ async function updateCommandInternal(
     packageInstallSpec,
     packageInstallTarget,
     packageAlreadyCurrent,
-    packageRuntimeTarget,
     managedServiceRootRedirect,
     managedServiceRoot,
     managedServiceNodeRunner,

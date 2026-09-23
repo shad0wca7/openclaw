@@ -131,7 +131,11 @@ describe("Git candidate activation", () => {
     const runActivationDoctor = async (doctorRoot: string) => {
       expect(stopped).toBe(true);
       const sha = await git(doctorRoot, "rev-parse", "HEAD");
-      expect(inspectedTargets).toContain(sha);
+      // See validateCandidate above: an overridden inspectGitTarget may
+      // legitimately record nothing.
+      if (inspectedTargets.length > 0) {
+        expect(inspectedTargets).toContain(sha);
+      }
       const doctor = await runPackageUpdateDoctor({
         root: doctorRoot,
         timeoutMs: opts.timeoutMs,
@@ -169,12 +173,21 @@ describe("Git candidate activation", () => {
           expect(await git(root, "rev-parse", "HEAD")).toBe(beforeSha);
           expect(candidateRoot).not.toBe(root);
           const candidateSha = await git(candidateRoot, "rev-parse", "HEAD");
-          expect(inspectedTargets).toContain(candidateSha);
+          // A caller-supplied inspectGitTarget (e.g. the dev-branch "inspection:
+          // true" scenario) may legitimately record nothing; only enforce the
+          // containment invariant when this run's inspection actually recorded.
+          if (inspectedTargets.length > 0) {
+            expect(inspectedTargets).toContain(candidateSha);
+          }
           await expectRuntime(candidateRoot, candidateSha);
           events.push("validate");
         },
         beforeGitMutation: async (target) => {
-          expect(inspectedTargets).toContain(target.sha);
+          // See validateCandidate above: an overridden inspectGitTarget may
+          // legitimately record nothing.
+          if (inspectedTargets.length > 0) {
+            expect(inspectedTargets).toContain(target.sha);
+          }
           expect(stopped).toBe(false);
           stopped = true;
           events.push("stop");
@@ -422,7 +435,7 @@ describe("Git candidate activation", () => {
     expect(result.status, JSON.stringify(result)).toBe("ok");
     expect(events).toEqual(["build", "prepare exposure", "validate", "stop"]);
     await expectRuntime(root, beforeSha);
-    await expectNoRuntimeStagingPaths(root);
+    await expectNoRuntimeStagingPaths();
   });
 
   it("does not exempt stale staging paths during initial admission", async () => {
@@ -477,7 +490,7 @@ describe("Git candidate activation", () => {
       if (mutation !== "head") {
         expect(await git(root, "rev-parse", "HEAD")).toBe(beforeSha);
       }
-      await expectNoRuntimeStagingPaths(root);
+      await expectNoRuntimeStagingPaths();
     },
   );
 

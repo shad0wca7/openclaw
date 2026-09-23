@@ -122,6 +122,13 @@ vi.mock("./update-command-service.js", async (importOriginal) => ({
   maybeStopManagedServiceBeforeMutableUpdate: mocks.stopService,
   revalidateManagedGatewayServiceAfterUpdate: mocks.revalidateService,
 }));
+// Post-update maintenance parks custody through its own direct import, not the
+// "./update-command-service.js" barrel; mock it there too so a real (unfixtured)
+// native inspection never runs during these parked-doctor/runtime scenarios.
+vi.mock("./update-command-service-maintenance.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./update-command-service-maintenance.js")>()),
+  maybeStopManagedServiceBeforeMutableUpdate: mocks.stopService,
+}));
 vi.mock("./update-command-result.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./update-command-result.js")>()),
   markControlPlaneUpdateRestartSentinelFailureBestEffort: mocks.markSentinelFailure,

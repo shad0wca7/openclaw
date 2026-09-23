@@ -87,6 +87,13 @@ vi.mock("./update-command-service.js", async (importOriginal) => ({
     refreshDefinition: false,
   }),
 }));
+// Post-update maintenance parks custody through its own direct import, not the
+// "./update-command-service.js" barrel; mock it there too so a real (unfixtured)
+// native inspection never runs during this parked-doctor scenario.
+vi.mock("./update-command-service-maintenance.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./update-command-service-maintenance.js")>()),
+  maybeStopManagedServiceBeforeMutableUpdate: mocks.stopService,
+}));
 vi.mock("./update-command-result.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./update-command-result.js")>()),
   writeControlPlaneUpdateRestartSentinelBestEffort: async () => undefined,
@@ -203,6 +210,8 @@ it.each([
           preManagedServiceStop: {
             running: true,
             stopped: fresh,
+            inspected: true,
+            runtimeInspected: true,
             serviceUpdateVerdict: verdict,
             windowsTaskAutoStartRecovery: originalRecovery,
           },
@@ -220,6 +229,10 @@ it.each([
         "inspect",
         ...(initiallyRunning ? ["stop"] : []),
         ...(fresh ? ["fresh-child"] : ["publication", "plugins"]),
+        // The parent re-inspects (but does not need to re-stop) its already-parked
+        // custody once more before the post-plugin Doctor it retains ownership
+        // through, since a managed service can respawn between the two.
+        "inspect",
         "doctor",
         "restart-verify",
       ]);

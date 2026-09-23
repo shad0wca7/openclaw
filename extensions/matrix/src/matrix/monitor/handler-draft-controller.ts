@@ -143,7 +143,7 @@ export async function createMatrixDraftController(params: {
       }
     }
     draftStream.reset();
-    draftDisposition = "active";
+    previewLifecycle.reset();
   };
   const shouldStreamPreviewToolProgress = Boolean(draftStream) && previewToolProgressEnabled;
   const shouldSuppressDefaultToolProgressMessages =

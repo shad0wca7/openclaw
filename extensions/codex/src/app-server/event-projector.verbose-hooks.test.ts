@@ -208,7 +208,7 @@ describe("CodexAppServerEventProjector verbose output and hook projection", () =
     expect(onToolResult).toHaveBeenCalledTimes(2);
     expect(onToolResult).toHaveBeenNthCalledWith(1, {
       text: "📖 Read: `from README.md`",
-      channelData: { openclawToolProgressId: "tool-1" },
+      channelData: { openclawToolProgressId: "tool:tool-1" },
     });
     expect(onToolResult).toHaveBeenNthCalledWith(2, {
       text: "📖 Read\n```txt\nfile contents\n```",

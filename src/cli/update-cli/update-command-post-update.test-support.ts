@@ -323,7 +323,9 @@ export function registerForegroundFinalizationTests({
           outcome === "noop"
             ? []
             : outcome === "runtime"
-              ? ["park", "publish"]
+              ? // Changed dist runtime output is also Doctor-verified before
+                // restart, even when plugin state itself did not change.
+                ["park", "publish", "doctor"]
               : outcome === "retirement"
                 ? ["doctor"]
                 : ["park", "doctor"],

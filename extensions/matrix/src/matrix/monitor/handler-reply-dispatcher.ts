@@ -314,7 +314,7 @@ export function createMatrixReplyDispatcher(config: {
   } = dispatcherOptions;
 
   return {
-    deliverReply: (payload: ReplyPayload, info: { kind: string }) =>
+    deliverReply: (payload: ReplyPayload, info: { kind: "tool" | "block" | "final" }) =>
       draftController.enqueuePresentation(() => deliverReply(payload, info)),
     onReplyError,
     turnDispatcherOptions,

@@ -6258,10 +6258,12 @@ describe("update-cli", () => {
           effectiveChannel: "dev",
           devBranch: "integrate/live",
         });
-        expect(runGatewayUpdate).not.toHaveBeenCalled();
+        expect(updateGitCheckout).not.toHaveBeenCalled();
       } else {
-        expect(runGatewayUpdate).toHaveBeenCalledWith(
-          expect.objectContaining({ channel: "dev", devBranch: "integrate/live" }),
+        expect(updateGitCheckout).toHaveBeenCalledWith(
+          expect.objectContaining({
+            opts: expect.objectContaining({ channel: "dev", devBranch: "integrate/live" }),
+          }),
         );
       }
     },
@@ -6898,7 +6900,7 @@ describe("update-cli", () => {
     mockRunningManagedGateway(["node", path.join(root, "dist", "index.js"), "gateway", "run"]);
     readPackageVersion.mockResolvedValue(VERSION);
     mockGatewayHealth(VERSION, "current-git-gateway");
-    vi.mocked(runGatewayUpdate).mockResolvedValueOnce({
+    vi.mocked(updateGitCheckout).mockResolvedValueOnce({
       status: "skipped",
       mode: "git",
       root,

@@ -6395,6 +6395,7 @@ process.stdin.on("end", () => {
           const run = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue("wrong model");
           await expect(
             runWithModelFallback({
+              cfg: undefined,
               provider: "fixture-provider",
               model: "fixture-model",
               manifestPlugins: [],
